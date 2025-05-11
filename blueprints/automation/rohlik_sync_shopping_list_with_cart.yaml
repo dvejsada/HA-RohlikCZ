@@ -1,0 +1,129 @@
+blueprint:
+  domain: automation
+  name: Rohlik Add Item From Shopping List to Cart
+  description: This automation adds new item from the Home Assistant shopping list to the Rohlik.cz cart using the Search and Add to Cart action, and keeps the shopping list in sync with the current cart content.
+  author: eMeF1
+
+  input:
+    shopping_list:
+      name: Shopping list
+      description: >
+        The shopping list where items will be synced and monitored. This must be a list from the legacy Shopping List integration (not a generic 'todo' list), even though shopping lists are also represented under the 'shopping_list' domain in Home Assistant.
+      selector:
+        entity:
+          filter:
+            domain: todo
+    rohlik_device:
+      name: Rohlik.cz device
+      description: The Rohlik.cz device that provides cart and product actions.
+      selector:
+        config_entry:
+
+
+
+    rohlik_last_updated_sensor:
+      name: Last Updated entity from the Rohlik.cz integration
+      description:   The sensor that updates when the Rohlik.cz integration loads data from the API. Typically named sensor.[device]_last_updated.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: timestamp
+    search_favourites_only:
+      name: Use favourites items only
+      description: >
+        If enabled, only favourites will be considered when adding item to Rohlik.cz cart. Disable to allow searching the entire catalog.
+      default: false
+      selector:
+        boolean: {}
+
+triggers:
+  - event_type: shopping_list_updated
+    event_data:
+      action: add
+    trigger: event
+    id: new_item_in_shopping_list
+    alias: ▶️ 1️⃣ New item added to shopping list
+
+  - alias: ▶️ 2️⃣ Rohlik cart last_updated changed
+    trigger: state
+    entity_id:
+      - !input rohlik_last_updated_sensor
+    id: data_updated
+
+conditions:
+  - alias: For ▶️ 1️⃣ New item added test if the item was added by a user
+    condition: or
+    conditions:
+      - alias: ✅ New item added and not a synced item (no [x])
+        condition: and
+        conditions:
+          - condition: trigger
+            id:
+              - new_item_in_shopping_list
+            alias: ▶️ 1️⃣ Triggered by new item in shopping list
+          - condition: template
+            value_template: "{{ '[' not in trigger.event.data.item.name }}"
+            alias: 🚫 Skip if item has quantity tag (e.g. '[2x]')
+      - condition: trigger
+        id:
+          - data_updated
+        alias: ▶️ 2️⃣ If triggered by Rohlik cart update continue
+actions:
+  - alias: 🆕 Handle new shopping list item → add to cart
+    if:
+      - alias: ▶️ 1️⃣ Triggered by new item added to shopping list
+        condition: trigger
+        id:
+          - new_item_in_shopping_list
+    then:
+      - action: rohlikcz.search_and_add_to_cart
+        metadata: {}
+        data:
+          quantity: 1
+          config_entry_id: !input rohlik_device
+          product_name: "{{ trigger.event.data.item.name }}"
+          favourite: !input search_favourites_only
+        alias: ➕ 🛒 Add item to Rohlik cart (quantity = 1)
+  - alias: 🔄 Sync shopping list with Rohlik.cz cart content
+    if:
+      - alias: ▶️ 1️⃣ 2️⃣ Trigger on cart sync or new item in shopping list
+        condition: trigger
+        id:
+          - data_updated
+          - new_item_in_shopping_list
+    then:
+      - alias: 🛒 Get current Rohlik.cz cart content
+        action: rohlikcz.get_cart_content
+        data:
+          config_entry_id: !input rohlik_device
+        response_variable: cart_content
+      - alias: >-
+          🛒 📤 Format cart items with quantities to list (e.g., 'Milk [2x],
+          Bread [1x]')
+        variables:
+          cart_content_list_with_quantity: |-
+            {% set ns = namespace(lst=[]) %}
+            {% for p in cart_content['products'] %}
+              {% set ns.lst = ns.lst + [ p['name'] ~ ' [' ~ (p['quantity'] | int) ~ 'x]' ] %}
+            {% endfor %}
+            {{ ns.lst }}
+      - alias: ✅ Mark all existing shopping list items as completed
+        action: shopping_list.complete_all
+        data: {}
+      - alias: 🧹 Clear completed items from the shopping list
+        action: shopping_list.clear_completed_items
+        data: {}
+      - alias: ➕ 📋 Add formatted Rohlik cart items back to the shopping list
+        repeat:
+          for_each: "{{ cart_content_list_with_quantity }}"
+          sequence:
+            - alias: 🛒 Add item to shopping list
+              action: todo.add_item
+              target:
+                entity_id: !input shopping_list
+              data:
+                item: "{{ repeat.item }}"
+mode: queued
+trace:
+  stored_traces: 20
