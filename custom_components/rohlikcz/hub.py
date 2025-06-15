@@ -43,6 +43,10 @@ class RohlikAccount:
         """Return the unique ID for this account."""
         return self.data["login"]["data"]["user"]["id"]
 
+    @property
+    def is_ordered(self) -> bool:
+        return len(self.data.get('next_order', [])) > 0
+
     async def async_update(self) -> None:
         """ Updates the data from API."""
 

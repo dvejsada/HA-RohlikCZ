@@ -33,6 +33,7 @@ ICON_NEXT_ORDER_TILL = "mdi:clock-end"
 ICON_CALENDAR_CHECK = "mdi:calendar-check"
 ICON_CALENDAR_REMOVE = "mdi:calendar-remove"
 ICON_INFO = "mdi:information-outline"
+ICON_DELIVERY_TIME = "mdi:timer-sand"
 
 """ Service attributes """
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"

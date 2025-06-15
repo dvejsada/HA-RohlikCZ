@@ -125,6 +125,9 @@
       },
       "delivery_info": {
         "name": "Informace o doručení"
+      },
+      "delivery_time": {
+        "name": "Čas doručení"
       }
     },
     "todo": {
