@@ -73,29 +73,24 @@ The integration provides the following entities:
 - **Slot Eco Time** - Timestamp of nearest eco delivery slot available
 - **Delivery Slot Start** - Timestamp of beginning of delivery window for order made
 - **Delivery Slot Start** - Timestamp of end of delivery window for order made
+- **Delivery Time** - Timestamp of predicted exact delivery time for order made
+- **Monthly Spent** - Total amount spent in the current month
 
 ### Rohlik Services for Home Assistant
 
 Integration provides these custom actions (service calls):
 
-#### Add to Cart
-Add product to your Rohlik shopping cart using product ID and quantity.
-
-#### Search Product
-Find products available on Rohlik by searching their names.
-
-#### Get Shopping List
-Retrieve products saved in shopping list from Rohlik by its ID.
-
-#### Get Cart Content
-Retrieve items currently in your Rohlik shopping cart.
-
-#### Search and Add
-Find a product and add it to your cart in one step - just tell it what you want and how many.
+- **Add to Cart** - Add product to your Rohlik shopping cart using product ID and quantity.
+- **Search Product** - Find products available on Rohlik by searching their names.
+- **Get Shopping List** - Retrieve products saved in shopping list from Rohlik by its ID.
+- **Get Cart Content** - Retrieve items currently in your Rohlik shopping cart.
+- **Search and Add** - Find a product and add it to your cart in one step - just tell it what you want and how many.
+- **Update Data** - Force the integration to update data from Rohlik.cz immediately.
 
 ## Data Updates
 
 The integration updates data from Rohlik.cz periodically every 10 minutes by default. The data includes your account details, premium status, delivery options, shopping cart, and more.
+You can also trigger an update using the "Update Data" action (service call).
 
 ## Development
 
