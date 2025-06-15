@@ -191,7 +191,8 @@ class RohlikCZAPI:
             "last_order": "/api/v3/orders/delivered?offset=0&limit=1",
             "premium_profile": "/services/frontend-service/premium/profile",
             "next_delivery_slot": "/services/frontend-service/timeslots-api/",
-            "delivery_announcements": "/services/frontend-service/announcements/delivery"
+            "delivery_announcements": "/services/frontend-service/announcements/delivery",
+            "delivered_orders": "/api/v3/orders/delivered?offset=0&limit=50"
         }
 
         result["login"] = await self.login(session)

@@ -1,6 +1,44 @@
 from datetime import timedelta, datetime, time
+import json
 from zoneinfo import ZoneInfo
 import re
+
+
+def calculate_current_month_orders_total(orders: list) -> float|None:
+    """
+    Calculate the total amount of orders for the current month from JSON data.
+
+    Args:
+        orders (list): List of order dictionaries, each containing an 'orderTime' and 'priceComposition'
+
+    Returns:
+        float: Total amount of orders for the current month. Returns 0.0 if no orders
+               are found for the current month or None if the JSON is invalid.
+
+    """
+    try:
+
+        # Get current month pattern (e.g., "2025-06-")
+        current_month_pattern = datetime.now().strftime("%Y-%m-")
+
+        # Filter orders from current month and calculate sum
+        total_amount = 0.0
+
+        for order in orders:
+            try:
+                # Simple string check for current month
+                if current_month_pattern in order['orderTime']:
+                    amount = float(order['priceComposition']['total']['amount'])
+                    total_amount += amount
+            except (KeyError, ValueError, TypeError):
+                # Skip invalid orders
+                continue
+
+        return total_amount
+
+    except (json.JSONDecodeError, TypeError):
+        return None
+
 
 def extract_delivery_datetime(text: str) -> datetime | None:
     """

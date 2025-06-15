@@ -16,10 +16,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
-    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME
+    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT
 from .entity import BaseEntity
 from .hub import RohlikAccount
-from .utils import extract_delivery_datetime
+from .utils import extract_delivery_datetime, calculate_current_month_orders_total
 
 SCAN_INTERVAL = timedelta(seconds=600)
 
@@ -48,7 +48,8 @@ async def async_setup_entry(
         NextOrderTill(rohlik_hub),
         NextOrderSince(rohlik_hub),
         DeliveryInfo(rohlik_hub),
-        DeliveryTime(rohlik_hub)
+        DeliveryTime(rohlik_hub),
+        MonthlySpent(rohlik_hub)
     ]
 
     if rohlik_hub.has_address:
@@ -415,6 +416,29 @@ class CreditAmount(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_CREDIT
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class MonthlySpent(BaseEntity, SensorEntity):
+    """Sensor for amount spent in current month."""
+
+    _attr_translation_key = "monthly_spent"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> float | None:
+        """Returns amount spend within last month."""
+        _LOGGER.error(self._rohlik_account.data.get('delivered_orders', "[]"))
+        return calculate_current_month_orders_total(self._rohlik_account.data.get('delivered_orders', []))
+
+    @property
+    def icon(self) -> str:
+        return ICON_MONTHLY_SPENT
 
     async def async_added_to_hass(self) -> None:
         self._rohlik_account.register_callback(self.async_write_ha_state)

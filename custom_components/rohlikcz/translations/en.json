@@ -128,6 +128,10 @@
       },
       "delivery_time": {
         "name": "Delivery Time"
+      },
+      "monthly_spent": {
+        "name": "Spent This Month",
+        "unit_of_measurement": "CZK"
       }
     },
     "todo": {

@@ -34,6 +34,7 @@ ICON_CALENDAR_CHECK = "mdi:calendar-check"
 ICON_CALENDAR_REMOVE = "mdi:calendar-remove"
 ICON_INFO = "mdi:information-outline"
 ICON_DELIVERY_TIME = "mdi:timer-sand"
+ICON_MONTHLY_SPENT = "mdi:cash-register"
 
 """ Service attributes """
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
