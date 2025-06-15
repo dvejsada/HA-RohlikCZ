@@ -10,7 +10,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN, ATTR_CONFIG_ENTRY_ID, ATTR_PRODUCT_ID, ATTR_QUANTITY, ATTR_PRODUCT_NAME, \
     ATTR_SHOPPING_LIST_ID, ATTR_LIMIT, ATTR_FAVOURITE_ONLY, SERVICE_ADD_TO_CART, SERVICE_SEARCH_PRODUCT, SERVICE_GET_SHOPPING_LIST, \
-    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT
+    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,6 +116,21 @@ def register_services(hass: HomeAssistant) -> None:
             _LOGGER.error(f"Failed to get cart content: {err}")
             raise HomeAssistantError(f"Failed to get get cart content: {err}")
 
+    async def async_update_data(call: ServiceCall) -> None:
+        """Updates integration data."""
+        config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
+
+        if config_entry_id not in hass.data[DOMAIN]:
+            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
+
+        account = hass.data[DOMAIN][config_entry_id]
+        try:
+            await account.async_update()
+
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to update data: {err}")
+
+
     # Register the services
     hass.services.async_register(
         DOMAIN,
@@ -174,4 +189,14 @@ def register_services(hass: HomeAssistant) -> None:
             vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
         }),
         supports_response=True
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UPDATE_DATA,
+        async_update_data,
+        schema=vol.Schema({
+            vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string
+        }),
+        supports_response=False
     )
