@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 import logging
 import voluptuous as vol
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
@@ -198,5 +198,5 @@ def register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema({
             vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string
         }),
-        supports_response=False
+        supports_response=SupportsResponse.NONE
     )

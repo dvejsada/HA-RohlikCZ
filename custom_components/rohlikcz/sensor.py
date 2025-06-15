@@ -688,11 +688,16 @@ class UpdateSensor(BaseEntity, SensorEntity):
     _attr_icon = ICON_UPDATE
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
-    def __init__(self, rohlik_account: RohlikAccount) -> None:
-        super().__init__(rohlik_account)
-        self._attr_native_value = datetime.now(tz=ZoneInfo("Europe/Prague"))
+    @property
+    def native_value(self) -> datetime:
+        return datetime.now(tz=ZoneInfo("Europe/Prague"))
 
     async def async_update(self) -> None:
         """Calls regular update of data from API."""
         await self._rohlik_account.async_update()
-        self._attr_native_value = datetime.now(tz=ZoneInfo("Europe/Prague"))
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
