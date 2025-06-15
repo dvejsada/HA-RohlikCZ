@@ -96,6 +96,18 @@ get_cart_content:
         config_entry:
           integration: rohlikcz
 
+update_data:
+  name: Update data
+  description: Update data from the account
+  fields:
+    config_entry_id:
+      name: Account
+      description: The Rohlik account to use
+      required: true
+      selector:
+        config_entry:
+          integration: rohlikcz
+
 search_and_add_to_cart:
   name: Search and add to cart
   description: Search for a product and add to a shopping cart
