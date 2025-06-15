@@ -165,8 +165,6 @@ class RohlikCZAPI:
 
             if logout_response["status"] != 200:
                 raise RohlikczError(f"Unknown error occurred during logout: {logout_response}")
-            else:
-                _LOGGER.error("Successfully logged out from Rohlik.cz")
 
 
         except RequestException as err:

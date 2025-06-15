@@ -433,7 +433,6 @@ class MonthlySpent(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Returns amount spend within last month."""
-        _LOGGER.error(self._rohlik_account.data.get('delivered_orders', "[]"))
         return calculate_current_month_orders_total(self._rohlik_account.data.get('delivered_orders', []))
 
     @property
