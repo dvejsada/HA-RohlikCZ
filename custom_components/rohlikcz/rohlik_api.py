@@ -51,13 +51,7 @@ def mask_data(input_dict):
 
 
 class Product(TypedDict):
-    """
-    TypedDict representing a Rohlik product to be added to cart.
 
-    Attributes:
-        product_id (int): The unique identifier of the product
-        quantity (int): The quantity of the product to add
-    """
     product_id: int
     quantity: int
 
@@ -153,6 +147,30 @@ class RohlikCZAPI:
         except RequestException as err:
             raise APIRequestFailedError(f"Cannot connect to website! Check your internet connection and try again: {err}")
 
+    async def logout(self, session) -> None:
+        """
+        Log out from the Rohlik.cz service.
+        :param session:
+        :return:
+        """
+        logout_url = f"{BASE_URL}/services/frontend-service/logout"
+
+        try:
+            logout_response: Response = await self._run_in_executor(
+                session.post,
+                logout_url
+            )
+
+            logout_response: dict = logout_response.json()
+
+            if logout_response["status"] != 200:
+                raise RohlikczError(f"Unknown error occurred during logout: {logout_response}")
+            else:
+                _LOGGER.error("Successfully logged out from Rohlik.cz")
+
+
+        except RequestException as err:
+            raise APIRequestFailedError(f"Cannot connect to website! Check your internet connection and try again: {err}")
 
     async def get_data(self):
         """
@@ -211,6 +229,7 @@ class RohlikCZAPI:
             raise APIRequestFailedError(f"Cannot connect to website! Check your internet connection and try again: {err}")
         finally:
             # Step 3: Close the session
+            await self.logout(session)
             await self._run_in_executor(session.close)
 
     async def add_to_cart(self, product_list: list[dict]) -> dict:
@@ -255,6 +274,7 @@ class RohlikCZAPI:
             _LOGGER.error(f"Request failed: {err}")
             raise ValueError("Request failed")
         finally:
+            await self.logout(session)
             await self._run_in_executor(session.close)
 
     async def search_product(self, product_name: str, limit: int = 10, favourite: bool = False):
@@ -328,6 +348,7 @@ class RohlikCZAPI:
             _LOGGER.error(f"Request failed: {err}")
             return None
         finally:
+            await self.logout(session)
             await self._run_in_executor(session.close)
 
     async def get_shopping_list(self, shopping_list_id=None) -> dict:
@@ -362,6 +383,7 @@ class RohlikCZAPI:
             _LOGGER.error(f"Request failed: {err}")
             raise ValueError("Request failed")
         finally:
+            await self.logout(session)
             await self._run_in_executor(session.close)
 
     async def get_cart_content(self, logged_in: bool = False, session = None) -> Dict:
@@ -389,6 +411,7 @@ class RohlikCZAPI:
             raise ValueError("Request failed")
         finally:
             if not logged_in:
+                await self.logout(session)
                 await self._run_in_executor(session.close)
 
         data = cart_content.get("data", {})
@@ -451,4 +474,5 @@ class RohlikCZAPI:
             _LOGGER.error(f"Error deleting item with orderFieldId {order_field_id}: {err}")
             raise APIRequestFailedError(f"Failed to delete item from cart: {err}")
         finally:
+            await self.logout(session)
             await self._run_in_executor(session.close)
