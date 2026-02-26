@@ -231,6 +231,48 @@ class RohlikCZAPI:
             await self.logout(session)
             await self._run_in_executor(session.close)
 
+    async def get_delivered_orders_page(self, session, offset: int = 0, limit: int = 50) -> list:
+        """Fetch a page of delivered orders using an existing authenticated session."""
+        url = f"{BASE_URL}/api/v3/orders/delivered?offset={offset}&limit={limit}"
+        try:
+            response = await self._run_in_executor(session.get, url)
+            response.raise_for_status()
+            return response.json()
+        except RequestException as err:
+            _LOGGER.error(f"Error fetching delivered orders page (offset={offset}): {err}")
+            return []
+
+    async def fetch_all_delivered_orders(self) -> list:
+        """Fetch ALL delivered orders by paginating through the API. Returns list of all orders."""
+        session = requests.Session()
+        all_orders = []
+        offset = 0
+        limit = 50
+
+        try:
+            await self.login(session)
+
+            while True:
+                page = await self.get_delivered_orders_page(session, offset, limit)
+                if not page:
+                    break
+                all_orders.extend(page)
+                _LOGGER.info(f"Fetched {len(all_orders)} orders so far (offset={offset})")
+                if len(page) < limit:
+                    break
+                offset += limit
+                # Rate limit: 200ms between pages
+                await asyncio.sleep(0.2)
+
+            return all_orders
+
+        except RequestException as err:
+            _LOGGER.error(f"Error during full order history fetch: {err}")
+            return all_orders
+        finally:
+            await self.logout(session)
+            await self._run_in_executor(session.close)
+
     async def add_to_cart(self, product_list: list[dict]) -> dict:
         """
         Add multiple products to the shopping cart.
