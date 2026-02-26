@@ -143,3 +143,15 @@ search_and_add_to_cart:
       example: false
       selector:
         boolean:
+
+fetch_order_history:
+  name: Fetch order history
+  description: Fetch complete order history from Rohlik.cz and store locally. Run once to backfill historical data.
+  fields:
+    config_entry_id:
+      name: Account
+      description: The Rohlik account to use
+      required: true
+      selector:
+        config_entry:
+          integration: rohlikcz
