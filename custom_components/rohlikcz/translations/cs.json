@@ -132,6 +132,14 @@
       "monthly_spent": {
         "name": "Měsíční útrata",
         "unit_of_measurement": "Kč"
+      },
+      "yearly_spent": {
+        "name": "Roční útrata",
+        "unit_of_measurement": "Kč"
+      },
+      "alltime_spent": {
+        "name": "Celková útrata",
+        "unit_of_measurement": "Kč"
       }
     },
     "todo": {

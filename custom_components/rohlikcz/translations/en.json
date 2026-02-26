@@ -132,6 +132,14 @@
       "monthly_spent": {
         "name": "Spent This Month",
         "unit_of_measurement": "CZK"
+      },
+      "yearly_spent": {
+        "name": "Spent This Year",
+        "unit_of_measurement": "CZK"
+      },
+      "alltime_spent": {
+        "name": "Spent All Time",
+        "unit_of_measurement": "CZK"
       }
     },
     "todo": {
