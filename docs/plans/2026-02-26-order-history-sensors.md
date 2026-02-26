@@ -632,7 +632,7 @@ Call via MCP: `ha_call_service("rohlikcz", "fetch_order_history", data={"config_
 **Step 5: Verify backfill worked**
 
 - Check `ha_get_state("sensor.rohlik_spent_all_time")` — attributes should show `order_count` >> 12
-- Check file exists: `cat /Volumes/config/.storage/rohlikcz_1086873_orders.json | python3 -m json.tool | head -20`
+- Check file exists: `cat /Volumes/config/.storage/rohlikcz_<user_id>_orders.json | python3 -m json.tool | head -20`
 
 **Step 6: Commit final state**
 

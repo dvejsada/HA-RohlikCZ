@@ -35,7 +35,7 @@ JSON file at `/config/.storage/rohlikcz_{user_id}_orders.json`:
 ```json
 {
   "version": 1,
-  "user_id": "1086873",
+  "user_id": "<user_id>",
   "tracking_since": "2026-02-26T12:00:00+01:00",
   "orders": {
     "1119530344": {"date": "2026-02-25", "amount": 1523.50},
