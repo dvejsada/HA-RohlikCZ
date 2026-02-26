@@ -36,9 +36,12 @@ From the Home Assistant front page go to **Configuration** and then select **Int
 Use the "plus" button in the bottom right to add a new integration called **Rohlik.cz**.
 
 Fill in:
- 
+
 - Email (your Rohlik.cz account email)
 - Password (your Rohlik.cz account password)
+
+> [!NOTE]
+> If your password contains special characters (e.g. `` ` ``, `$`, `+`), login may fail due to a Rohlik.cz server-side limitation. If you experience login issues, try changing your Rohlik.cz password to use only standard alphanumeric characters and common symbols.
 
 The integration will connect to your Rohlik.cz account and set up the entities.
 

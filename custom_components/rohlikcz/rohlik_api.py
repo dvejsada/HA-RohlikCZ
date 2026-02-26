@@ -128,10 +128,22 @@ class RohlikCZAPI:
             login_response: dict = login_response.json()
 
             if login_response["status"] != 200:
+                messages = login_response.get("messages", [])
+                error_detail = messages[0]["content"] if messages else None
+                _LOGGER.error(f"Login failed with status {login_response['status']}. Response: {mask_data(login_response)}")
                 if login_response["status"] == 401:
-                    raise InvalidCredentialsError(login_response["messages"][0]["content"])
+                    if error_detail:
+                        raise InvalidCredentialsError(error_detail)
+                    raise InvalidCredentialsError(
+                        "Login failed. Please check your credentials. "
+                        "If your password contains special characters (e.g. `, $, +, etc.), "
+                        "try changing it to use only standard characters — "
+                        "Rohlik.cz may not handle them correctly."
+                    )
                 else:
-                    raise RohlikczError(f"Unknown error occurred during login: {login_response["messages"][0]["content"]}")
+                    if not error_detail:
+                        error_detail = f"status code {login_response['status']}"
+                    raise RohlikczError(f"Unknown error occurred during login: {error_detail}")
 
             if not self._user_id:
                 self._user_id = login_response.get("data", {}).get("user", {}).get("id", None)
