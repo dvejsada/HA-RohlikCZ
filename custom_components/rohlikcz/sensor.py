@@ -612,12 +612,14 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Store state for restoration."""
+        count = len(self._processed_orders)
         return {
             "monthly_total": self._monthly_total,
             "processed_orders": list(self._processed_orders),
             "current_month": self._current_month,
             "last_reset": self._last_reset.isoformat() if self._last_reset else None,
-            "processed_count": len(self._processed_orders)
+            "processed_count": count,
+            "average_order_value": round(self._monthly_total / count, 2) if count > 0 else 0.0
         }
 
     @property
