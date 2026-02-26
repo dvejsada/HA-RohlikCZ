@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
-    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT
+    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT
 from .entity import BaseEntity
 from .hub import RohlikAccount
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
@@ -50,7 +50,9 @@ async def async_setup_entry(
         NextOrderSince(rohlik_hub),
         DeliveryInfo(rohlik_hub),
         DeliveryTime(rohlik_hub),
-        MonthlySpent(rohlik_hub)
+        MonthlySpent(rohlik_hub),
+        YearlySpent(rohlik_hub),
+        AllTimeSpent(rohlik_hub),
     ]
 
     if rohlik_hub.has_address:
@@ -625,6 +627,87 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def icon(self) -> str:
         return ICON_MONTHLY_SPENT
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class YearlySpent(BaseEntity, SensorEntity):
+    """Sensor for amount spent in current year from persistent order store."""
+
+    _attr_translation_key = "yearly_spent"
+    _attr_should_poll = False
+    _attr_state_class = SensorStateClass.TOTAL
+
+    @property
+    def native_value(self) -> float | None:
+        """Returns amount spent in current year."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        return store.yearly_total(year)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        count = store.yearly_count(year)
+        total = store.yearly_total(year)
+        return {
+            "year": year,
+            "order_count": count,
+            "average_order_value": round(total / count, 2) if count > 0 else 0.0,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_YEARLY_SPENT
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class AllTimeSpent(BaseEntity, SensorEntity):
+    """Sensor for total amount spent across all tracked orders."""
+
+    _attr_translation_key = "alltime_spent"
+    _attr_should_poll = False
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def native_value(self) -> float | None:
+        """Returns total amount spent across all orders."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        return store.alltime_total()
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        count = store.alltime_count()
+        total = store.alltime_total()
+        return {
+            "order_count": count,
+            "average_order_value": round(total / count, 2) if count > 0 else 0.0,
+            "first_order_date": store.first_order_date(),
+            "tracking_since": store.tracking_since,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_ALLTIME_SPENT
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         self._rohlik_account.remove_callback(self.async_write_ha_state)

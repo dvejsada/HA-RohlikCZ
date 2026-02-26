@@ -35,6 +35,8 @@ ICON_CALENDAR_REMOVE = "mdi:calendar-remove"
 ICON_INFO = "mdi:information-outline"
 ICON_DELIVERY_TIME = "mdi:timer-sand"
 ICON_MONTHLY_SPENT = "mdi:cash-register"
+ICON_YEARLY_SPENT = "mdi:calendar-text"
+ICON_ALLTIME_SPENT = "mdi:chart-line"
 ICON_DELIVERY_CALENDAR = "mdi:calendar-clock"
 
 """ Service attributes """
