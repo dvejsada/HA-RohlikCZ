@@ -155,3 +155,15 @@ fetch_order_history:
       selector:
         config_entry:
           integration: rohlikcz
+
+enrich_orders:
+  name: Enrich orders
+  description: Enrich stored orders with item details and product categories. Use after fetch_order_history to populate category spending sensors.
+  fields:
+    config_entry_id:
+      name: Account
+      description: The Rohlik account to use
+      required: true
+      selector:
+        config_entry:
+          integration: rohlikcz

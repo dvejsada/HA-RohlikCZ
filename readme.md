@@ -36,9 +36,16 @@ From the Home Assistant front page go to **Configuration** and then select **Int
 Use the "plus" button in the bottom right to add a new integration called **Rohlik.cz**.
 
 Fill in:
- 
+
 - Email (your Rohlik.cz account email)
 - Password (your Rohlik.cz account password)
+
+After login, you can optionally enable **Spending Analytics**:
+- Choose which category levels to track (top-level, mid-level, detailed, most specific, per-item)
+- Set how many top items to display in sensor attributes (default: 10)
+- Optionally hide discontinued products from rankings
+
+These options can be changed later via the integration's **Configure** button. Enabling analytics triggers a one-time download of your full order history (may take several minutes).
 
 The integration will connect to your Rohlik.cz account and set up the entities.
 
@@ -75,6 +82,20 @@ The integration provides the following entities:
 - **Delivery Slot End** - Timestamp of end of delivery window for order made
 - **Delivery Time** - Timestamp of predicted exact delivery time for order made
 - **Monthly Spent** - Total amount spent in the current month
+- **Yearly Spent** - Total amount spent in the current year (requires analytics)
+- **All Time Spent** - Total amount spent across all tracked orders (requires analytics)
+
+#### Spending Analytics Sensors (opt-in)
+
+When analytics levels are enabled in the integration options, the following sensors are created (each with "this year" and "all time" variants):
+
+- **Top Categories** (L0) - Spending by top-level categories (e.g. Drinks, Drugstore)
+- **Categories** (L1) - Spending by mid-level categories (e.g. Hot drinks, Cleaning products)
+- **Detailed Categories** (L2) - Spending by detailed categories (e.g. Coffee, Universal cleaner)
+- **Specific Categories** (L3) - Spending by most specific categories (e.g. Bean coffee, Spray cleaner)
+- **Per-Item** - Spending by individual product (e.g. Tchibo Barista, Savo Spray)
+
+Each sensor's attributes contain the top N items (configurable, default 10) sorted by spending, with `total_count`, `spent`, `units`, and `avg_unit_price` per entry.
 
 ### Calendar
 
@@ -104,6 +125,7 @@ Integration provides these custom actions (service calls):
 - **Get Cart Content** - Retrieve items currently in your Rohlik shopping cart.
 - **Search and Add** - Find a product and add it to your cart in one step - just tell it what you want and how many.
 - **Update Data** - Force the integration to update data from Rohlik.cz immediately.
+- **Fetch Order History** - Download full order history and enrich with item details and categories. Runs automatically when analytics is enabled, but can also be triggered manually.
 
 ## Data Updates
 

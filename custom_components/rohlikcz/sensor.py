@@ -17,7 +17,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
-    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT
+    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
+    ICON_CATEGORY_SPENDING
 from .entity import BaseEntity
 from .hub import RohlikAccount
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
@@ -33,6 +34,7 @@ async def async_setup_entry(
 ) -> None:
     """Add sensors for passed config_entry in HA."""
     rohlik_hub: RohlikAccount = hass.data[DOMAIN][config_entry.entry_id]  # type: ignore[Any]
+    analytics = rohlik_hub.analytics
 
     entities = [
         FirstDeliverySensor(rohlik_hub),
@@ -51,15 +53,34 @@ async def async_setup_entry(
         DeliveryInfo(rohlik_hub),
         DeliveryTime(rohlik_hub),
         MonthlySpent(rohlik_hub),
-        YearlySpent(rohlik_hub),
-        AllTimeSpent(rohlik_hub),
     ]
+
+    # Spending sensors that need the order store (only if any analytics enabled)
+    if analytics:
+        entities.append(YearlySpent(rohlik_hub))
+        entities.append(AllTimeSpent(rohlik_hub))
+
+    # Category sensors per selected level
+    if "categories_l0" in analytics:
+        entities.append(CategorySpendingL0Yearly(rohlik_hub))
+        entities.append(CategorySpendingL0AllTime(rohlik_hub))
+    if "categories_l1" in analytics:
+        entities.append(CategorySpendingYearly(rohlik_hub))
+        entities.append(CategorySpendingAllTime(rohlik_hub))
+    if "categories_l2" in analytics:
+        entities.append(CategorySpendingL2Yearly(rohlik_hub))
+        entities.append(CategorySpendingL2AllTime(rohlik_hub))
+    if "categories_l3" in analytics:
+        entities.append(CategorySpendingL3Yearly(rohlik_hub))
+        entities.append(CategorySpendingL3AllTime(rohlik_hub))
+    if "per_item" in analytics:
+        entities.append(ItemSpendingYearly(rohlik_hub))
+        entities.append(ItemSpendingAllTime(rohlik_hub))
 
     if rohlik_hub.has_address:
         entities.append(FirstExpressSlot(rohlik_hub))
         entities.append(FirstStandardSlot(rohlik_hub))
         entities.append(FirstEcoSlot(rohlik_hub))
-
 
     # Only add premium days remaining if the user is premium
     if rohlik_hub.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('active', False):
@@ -705,6 +726,432 @@ class AllTimeSpent(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_ALLTIME_SPENT
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingYearly(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by category for current year."""
+
+    _attr_translation_key = "categories_this_year"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of categories with spending this year."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+        return {
+            "year": year,
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.yearly_count(year),
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingAllTime(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by category across all time."""
+
+    _attr_translation_key = "categories_all_time"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of categories with spending all time."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
+        return {
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.alltime_count(),
+            "products_in_cache": store.cached_product_count,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingL0Yearly(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by L0 category for current year."""
+
+    _attr_translation_key = "categories_l0_this_year"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of L0 categories with spending this year."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+        return {
+            "year": year,
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.yearly_count(year),
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingL0AllTime(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by L0 category across all time."""
+
+    _attr_translation_key = "categories_l0_all_time"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of L0 categories with spending all time."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
+        return {
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.alltime_count(),
+            "products_in_cache": store.cached_product_count,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingL2Yearly(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by L2 category for current year."""
+
+    _attr_translation_key = "categories_l2_this_year"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of L2 categories with spending this year."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+        return {
+            "year": year,
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.yearly_count(year),
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingL2AllTime(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by L2 category across all time."""
+
+    _attr_translation_key = "categories_l2_all_time"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of L2 categories with spending all time."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
+        return {
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.alltime_count(),
+            "products_in_cache": store.cached_product_count,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingL3Yearly(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by L3 category for current year."""
+
+    _attr_translation_key = "categories_l3_this_year"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of L3 categories with spending this year."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        categories = store.category_totals(year=year, level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+        return {
+            "year": year,
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.yearly_count(year),
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class CategorySpendingL3AllTime(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by L3 category across all time."""
+
+    _attr_translation_key = "categories_l3_all_time"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of L3 categories with spending all time."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(categories)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        categories = store.category_totals(level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not categories:
+            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
+        return {
+            "total_count": len(categories),
+            "categories": categories[:self._rohlik_account.top_n],
+            "enriched_orders": store.enriched_count,
+            "total_orders": store.alltime_count(),
+            "products_in_cache": store.cached_product_count,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class ItemSpendingYearly(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by individual item for current year."""
+
+    _attr_translation_key = "items_this_year"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of unique items purchased this year."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        items = store.item_totals(year=year, hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(items)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        items = store.item_totals(year=year, hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not items:
+            return {"year": year}
+        return {
+            "year": year,
+            "total_count": len(items),
+            "items": items[:self._rohlik_account.top_n],
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
+
+    async def async_added_to_hass(self) -> None:
+        self._rohlik_account.register_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._rohlik_account.remove_callback(self.async_write_ha_state)
+
+
+class ItemSpendingAllTime(BaseEntity, SensorEntity):
+    """Sensor for spending breakdown by individual item across all time."""
+
+    _attr_translation_key = "items_all_time"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        """Returns number of unique items purchased all time."""
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        items = store.item_totals(hide_discontinued=self._rohlik_account.hide_discontinued)
+        return len(items)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        store = self._rohlik_account.order_store
+        if not store:
+            return None
+        items = store.item_totals(hide_discontinued=self._rohlik_account.hide_discontinued)
+        if not items:
+            return None
+        return {
+            "total_count": len(items),
+            "items": items[:self._rohlik_account.top_n],
+            "products_in_cache": store.cached_product_count,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_CATEGORY_SPENDING
 
     async def async_added_to_hass(self) -> None:
         self._rohlik_account.register_callback(self.async_write_ha_state)
