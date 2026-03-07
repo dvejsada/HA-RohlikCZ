@@ -30,8 +30,12 @@ class RohlikAccount:
 
     @property
     def device_info(self) -> DeviceInfo:
-        """ Provides a device info. """
-        return {"identifiers": {(DOMAIN, self.data["login"]["data"]["user"]["id"])}, "name": self.data["login"]["data"]["user"]["name"], "manufacturer": "Rohlík.cz"}
+        """Provides a device info."""
+        return {
+            "identifiers": {(DOMAIN, self.data["login"]["data"]["user"]["id"])},
+            "name": self.data["login"]["data"]["user"]["name"],
+            "manufacturer": "Rohlík.cz",
+        }
 
     @property
     def name(self) -> str:
@@ -45,10 +49,10 @@ class RohlikAccount:
 
     @property
     def is_ordered(self) -> bool:
-        return len(self.data.get('next_order', [])) > 0
+        return len(self.data.get("next_order", [])) > 0
 
     async def async_update(self) -> None:
-        """ Updates the data from API."""
+        """Updates the data from API."""
 
         self.data = await self._rohlik_api.get_data()
 
@@ -72,10 +76,11 @@ class RohlikAccount:
         """Add a product to the shopping cart."""
         product_list = [{"product_id": product_id, "quantity": quantity}]
         result = await self._rohlik_api.add_to_cart(product_list)
-        await self.async_update()
         return result
 
-    async def search_product(self, product_name: str, limit: int = 10, favourite: bool = False) -> Optional[Dict[str, Any]]:
+    async def search_product(
+        self, product_name: str, limit: int = 10, favourite: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Search for a product by name."""
         result = await self._rohlik_api.search_product(product_name, limit, favourite)
         return result
@@ -86,24 +91,37 @@ class RohlikAccount:
         return result
 
     async def get_cart_content(self) -> Dict:
-        """ Retrieves cart content. """
+        """Retrieves cart content."""
         result = await self._rohlik_api.get_cart_content()
         return result
 
-    async def search_and_add(self, product_name: str, quantity: int, favourite: bool = False) -> Dict | None:
-        """ Searches for product by name and adds to cart"""
+    async def search_and_add(
+        self, product_name: str, quantity: int, favourite: bool = False
+    ) -> Dict | None:
+        """Searches for product by name and adds to cart"""
 
-        searched_product = await self.search_product(product_name, limit = 5, favourite=favourite)
+        searched_product = await self.search_product(
+            product_name, limit=5, favourite=favourite
+        )
 
         if searched_product:
-            await self.add_to_cart(searched_product["search_results"][0]["id"], quantity)
-            return {"success": True, "message": "", "added_to_cart": [searched_product["search_results"][0]]}
+            await self.add_to_cart(
+                searched_product["search_results"][0]["id"], quantity
+            )
+            return {
+                "success": True,
+                "message": "",
+                "added_to_cart": [searched_product["search_results"][0]],
+            }
 
         else:
-            return {"success": False, "message": f'No product matched when searching for "{product_name}"{' in favourites' if favourite else ''}.', "added_to_cart": []}
+            return {
+                "success": False,
+                "message": f'No product matched when searching for "{product_name}"{" in favourites" if favourite else ""}.',
+                "added_to_cart": [],
+            }
 
     async def delete_from_cart(self, order_field_id: str) -> Dict:
         """Delete a product from the shopping cart using orderFieldId."""
         result = await self._rohlik_api.delete_from_cart(order_field_id)
-        await self.async_update()  # Refresh data after deletion
         return result

@@ -1,4 +1,5 @@
 """Platform for sensor integration."""
+
 from __future__ import annotations
 
 import logging
@@ -9,27 +10,53 @@ from collections.abc import Mapping
 from datetime import timedelta, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorDeviceClass,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
-    ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
-    ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT
+from .const import (
+    DOMAIN,
+    ICON_UPDATE,
+    ICON_CREDIT,
+    ICON_NO_LIMIT,
+    ICON_FREE_EXPRESS,
+    ICON_DELIVERY,
+    ICON_BAGS,
+    ICON_CART,
+    ICON_ACCOUNT,
+    ICON_EMAIL,
+    ICON_PHONE,
+    ICON_PREMIUM_DAYS,
+    ICON_LAST_ORDER,
+    ICON_NEXT_ORDER_SINCE,
+    ICON_NEXT_ORDER_TILL,
+    ICON_INFO,
+    ICON_DELIVERY_TIME,
+    ICON_MONTHLY_SPENT,
+)
 from .entity import BaseEntity
 from .hub import RohlikAccount
-from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
+from .utils import (
+    extract_delivery_datetime,
+    get_earliest_order,
+    parse_delivery_datetime_string,
+)
 
 SCAN_INTERVAL = timedelta(seconds=600)
 
 _LOGGER = logging.getLogger(__name__)
 
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Add sensors for passed config_entry in HA."""
     rohlik_hub: RohlikAccount = hass.data[DOMAIN][config_entry.entry_id]  # type: ignore[Any]
@@ -50,7 +77,7 @@ async def async_setup_entry(
         NextOrderSince(rohlik_hub),
         DeliveryInfo(rohlik_hub),
         DeliveryTime(rohlik_hub),
-        MonthlySpent(rohlik_hub)
+        MonthlySpent(rohlik_hub),
     ]
 
     if rohlik_hub.has_address:
@@ -58,12 +85,18 @@ async def async_setup_entry(
         entities.append(FirstStandardSlot(rohlik_hub))
         entities.append(FirstEcoSlot(rohlik_hub))
 
-
     # Only add premium days remaining if the user is premium
-    if rohlik_hub.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('active', False):
+    if (
+        rohlik_hub.data.get("login", {})
+        .get("data", {})
+        .get("user", {})
+        .get("premium", {})
+        .get("active", False)
+    ):
         entities.append(PremiumDaysRemainingSensor(rohlik_hub))
 
     async_add_entities(entities)
+
 
 class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
     """Sensor for showing delivery information."""
@@ -80,9 +113,11 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def native_value(self) -> str | None:
         """Returns text of announcement."""
-        delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
+        delivery_info: list = self._rohlik_account.data["delivery_announcements"][
+            "data"
+        ]["announcements"]
         if len(delivery_info) > 0:
-            clean_text = re.sub(r'<[^>]+>', '', delivery_info[0]["content"])
+            clean_text = re.sub(r"<[^>]+>", "", delivery_info[0]["content"])
             self._last_value = clean_text
             return clean_text
         else:
@@ -94,14 +129,18 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """ Get extra state attributes. """
-        delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
+        """Get extra state attributes."""
+        delivery_info: list = self._rohlik_account.data["delivery_announcements"][
+            "data"
+        ]["announcements"]
         if len(delivery_info) > 0:
-            delivery_time = extract_delivery_datetime(delivery_info[0].get("content", ""))
+            delivery_time = extract_delivery_datetime(
+                delivery_info[0].get("content", "")
+            )
 
             if delivery_info[0].get("additionalContent", None):
                 clean_text = delivery_info[0]["additionalContent"]
-                additional_info = re.sub(r'<[^>]+>', '', clean_text)
+                additional_info = re.sub(r"<[^>]+>", "", clean_text)
             else:
                 additional_info = None
 
@@ -110,7 +149,7 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
                 "Order Id": str(delivery_info[0].get("id")),
                 "Updated At": datetime.fromisoformat(delivery_info[0].get("updatedAt")),
                 "Title": delivery_info[0].get("title"),
-                "Additional Content": additional_info
+                "Additional Content": additional_info,
             }
             self._last_attributes = attrs
             return attrs
@@ -128,18 +167,19 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
         await super().async_added_to_hass()
-        
+
         # Restore last state if available
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
                 self._last_value = last_state.state
             if last_state.attributes:
                 self._last_attributes = dict(last_state.attributes)
-        
+
         self._rohlik_account.register_callback(self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         self._rohlik_account.remove_callback(self.async_write_ha_state)
+
 
 class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     """Sensor for showing delivery time."""
@@ -156,9 +196,13 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns time of delivery."""
-        delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
+        delivery_info: list = self._rohlik_account.data["delivery_announcements"][
+            "data"
+        ]["announcements"]
         if len(delivery_info) > 0:
-            delivery_time = extract_delivery_datetime(delivery_info[0].get("content", ""))
+            delivery_time = extract_delivery_datetime(
+                delivery_info[0].get("content", "")
+            )
             self._last_value = delivery_time
             return delivery_time
         else:
@@ -175,7 +219,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
         await super().async_added_to_hass()
-        
+
         # Restore last state if available
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
@@ -185,17 +229,20 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                         self._last_value = last_state.state
                     elif isinstance(last_state.state, str):
                         # Try to parse ISO format
-                        self._last_value = datetime.fromisoformat(last_state.state.replace('Z', '+00:00'))
+                        self._last_value = datetime.fromisoformat(
+                            last_state.state.replace("Z", "+00:00")
+                        )
                 except (ValueError, AttributeError):
                     _LOGGER.debug(
                         "Failed to restore delivery time from last state %r",
                         last_state.state,
                     )
-        
+
         self._rohlik_account.register_callback(self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         self._rohlik_account.remove_callback(self.async_write_ha_state)
+
 
 class FirstExpressSlot(BaseEntity, SensorEntity):
     """Sensor for first available delivery."""
@@ -207,32 +254,48 @@ class FirstExpressSlot(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns datetime of the express slot."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = (
+            self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("preselectedSlots", [])
+        )
         state = None
         for slot in preselected_slots:
             if slot.get("type", "") == "EXPRESS":
-                state = datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None),
-                                          "%Y-%m-%dT%H:%M:%S%z")
+                state = datetime.strptime(
+                    slot.get("slot", {}).get("interval", {}).get("since", None),
+                    "%Y-%m-%dT%H:%M:%S%z",
+                )
                 break
         return state
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = (
+            self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("preselectedSlots", [])
+        )
         extra_attrs = None
         for slot in preselected_slots:
             if slot.get("type", "") == "EXPRESS":
                 extra_attrs = {
-                    "Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None),
-                                                           "%Y-%m-%dT%H:%M:%S%z"),
+                    "Delivery Slot End": datetime.strptime(
+                        slot.get("slot", {}).get("interval", {}).get("till", None),
+                        "%Y-%m-%dT%H:%M:%S%z",
+                    ),
                     "Remaining Capacity Percent": int(
-                        slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)),
-                    "Remaining Capacity Message": slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get(
-                        "capacityMessage", None),
+                        slot.get("slot", {})
+                        .get("timeSlotCapacityDTO", {})
+                        .get("totalFreeCapacityPercent", 0)
+                    ),
+                    "Remaining Capacity Message": slot.get("slot", {})
+                    .get("timeSlotCapacityDTO", {})
+                    .get("capacityMessage", None),
                     "Price": int(slot.get("price", 0)),
                     "Title": slot.get("title", None),
-                    "Subtitle": slot.get("subtitle", None)
+                    "Subtitle": slot.get("subtitle", None),
                 }
                 break
 
@@ -240,8 +303,7 @@ class FirstExpressSlot(BaseEntity, SensorEntity):
 
     @property
     def entity_picture(self) -> str | None:
-        return  "https://cdn.rohlik.cz/images/icons/preselected-slots/express.png"
-
+        return "https://cdn.rohlik.cz/images/icons/preselected-slots/express.png"
 
     async def async_added_to_hass(self) -> None:
         self._rohlik_account.register_callback(self.async_write_ha_state)
@@ -260,40 +322,56 @@ class FirstStandardSlot(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns datetime of the standard slot."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = (
+            self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("preselectedSlots", [])
+        )
         state = None
         for slot in preselected_slots:
             if slot.get("type", "") == "FIRST":
-                state = datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None),
-                                          "%Y-%m-%dT%H:%M:%S%z")
+                state = datetime.strptime(
+                    slot.get("slot", {}).get("interval", {}).get("since", None),
+                    "%Y-%m-%dT%H:%M:%S%z",
+                )
                 break
         return state
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = (
+            self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("preselectedSlots", [])
+        )
         extra_attrs = None
         for slot in preselected_slots:
             if slot.get("type", "") == "FIRST":
                 extra_attrs = {
-                    "Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None),
-                                                           "%Y-%m-%dT%H:%M:%S%z"),
+                    "Delivery Slot End": datetime.strptime(
+                        slot.get("slot", {}).get("interval", {}).get("till", None),
+                        "%Y-%m-%dT%H:%M:%S%z",
+                    ),
                     "Remaining Capacity Percent": int(
-                        slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)),
-                    "Remaining Capacity Message": slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get(
-                        "capacityMessage", None),
+                        slot.get("slot", {})
+                        .get("timeSlotCapacityDTO", {})
+                        .get("totalFreeCapacityPercent", 0)
+                    ),
+                    "Remaining Capacity Message": slot.get("slot", {})
+                    .get("timeSlotCapacityDTO", {})
+                    .get("capacityMessage", None),
                     "Price": int(slot.get("price", 0)),
                     "Title": slot.get("title", None),
-                    "Subtitle": slot.get("subtitle", None)
-                    }
+                    "Subtitle": slot.get("subtitle", None),
+                }
                 break
 
         return extra_attrs
 
     @property
     def entity_picture(self) -> str | None:
-        return  "https://cdn.rohlik.cz/images/icons/preselected-slots/first.png"
+        return "https://cdn.rohlik.cz/images/icons/preselected-slots/first.png"
 
     async def async_added_to_hass(self) -> None:
         self._rohlik_account.register_callback(self.async_write_ha_state)
@@ -312,35 +390,56 @@ class FirstEcoSlot(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns datetime of the eco slot."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = (
+            self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("preselectedSlots", [])
+        )
         state = None
         for slot in preselected_slots:
             if slot.get("type", "") == "ECO":
-                state = datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None), "%Y-%m-%dT%H:%M:%S%z")
+                state = datetime.strptime(
+                    slot.get("slot", {}).get("interval", {}).get("since", None),
+                    "%Y-%m-%dT%H:%M:%S%z",
+                )
                 break
         return state
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = (
+            self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("preselectedSlots", [])
+        )
         extra_attrs = None
         for slot in preselected_slots:
             if slot.get("type", "") == "ECO":
-                extra_attrs = {"Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None), "%Y-%m-%dT%H:%M:%S%z"),
-                    "Remaining Capacity Percent": int(slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)),
-                    "Remaining Capacity Message": slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("capacityMessage", None),
+                extra_attrs = {
+                    "Delivery Slot End": datetime.strptime(
+                        slot.get("slot", {}).get("interval", {}).get("till", None),
+                        "%Y-%m-%dT%H:%M:%S%z",
+                    ),
+                    "Remaining Capacity Percent": int(
+                        slot.get("slot", {})
+                        .get("timeSlotCapacityDTO", {})
+                        .get("totalFreeCapacityPercent", 0)
+                    ),
+                    "Remaining Capacity Message": slot.get("slot", {})
+                    .get("timeSlotCapacityDTO", {})
+                    .get("capacityMessage", None),
                     "Price": int(slot.get("price", 0)),
                     "Title": slot.get("title", None),
-                    "Subtitle": slot.get("subtitle", None)
-                    }
+                    "Subtitle": slot.get("subtitle", None),
+                }
                 break
 
         return extra_attrs
 
     @property
     def entity_picture(self) -> str | None:
-        return  "https://cdn.rohlik.cz/images/icons/preselected-slots/eco.png"
+        return "https://cdn.rohlik.cz/images/icons/preselected-slots/eco.png"
 
     async def async_added_to_hass(self) -> None:
         self._rohlik_account.register_callback(self.async_write_ha_state)
@@ -358,16 +457,21 @@ class FirstDeliverySensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Returns first available delivery time."""
-        return self._rohlik_account.data.get('delivery', {}).get('data', {}).get('firstDeliveryText', {}).get('default', 'Unknown')
+        return (
+            self._rohlik_account.data.get("delivery", {})
+            .get("data", {})
+            .get("firstDeliveryText", {})
+            .get("default", "Unknown")
+        )
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns delivery location."""
-        delivery_data = self._rohlik_account.data.get('delivery', {}).get('data', {})
+        delivery_data = self._rohlik_account.data.get("delivery", {}).get("data", {})
         if delivery_data:
             return {
-                "delivery_location": delivery_data.get('deliveryLocationText', ''),
-                "delivery_type": delivery_data.get('deliveryType', '')
+                "delivery_location": delivery_data.get("deliveryLocationText", ""),
+                "delivery_type": delivery_data.get("deliveryType", ""),
             }
         return None
 
@@ -392,7 +496,12 @@ class AccountIDSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int | str:
         """Returns account ID."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('id', "N/A")
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("id", "N/A")
+        )
 
     @property
     def icon(self) -> str:
@@ -415,7 +524,12 @@ class EmailSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Returns email."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('email', 'N/A')
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("email", "N/A")
+        )
 
     @property
     def icon(self) -> str:
@@ -438,7 +552,12 @@ class PhoneSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Returns phone number."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('phone', 'N/A')
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("phone", "N/A")
+        )
 
     @property
     def icon(self) -> str:
@@ -460,7 +579,12 @@ class CreditAmount(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> float | str:
         """Returns amount of credit as state."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('credits', "N/A")
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("credits", "N/A")
+        )
 
     @property
     def icon(self) -> str:
@@ -475,7 +599,7 @@ class CreditAmount(BaseEntity, SensorEntity):
 
 class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     """Sensor for amount spent in current month with HA-side accumulation.
-    
+
     Only tracks orders that are delivered and closed (have final price).
     Orders from the delivered_orders endpoint should all be finalized.
     Uses Home Assistant's restore state to persist monthly totals across restarts.
@@ -489,31 +613,33 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
         super().__init__(rohlik_account)
         self._monthly_total: float = 0.0
         self._processed_orders: set[str] = set()  # Store order IDs
-        self._current_month: str = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m")
+        self._current_month: str = datetime.now(ZoneInfo("Europe/Prague")).strftime(
+            "%Y-%m"
+        )
         self._last_reset: datetime | None = None
 
     def _is_order_final(self, order: dict) -> bool:
         """
         Verify order has a final price.
-        
+
         Since orders come from the 'delivered_orders' endpoint, they should be finalized.
         We verify by checking that priceComposition exists and has a valid amount.
         """
         # Check if priceComposition exists
-        price_comp = order.get('priceComposition')
+        price_comp = order.get("priceComposition")
         if not price_comp:
             return False
-        
+
         # Check if total exists
-        total = price_comp.get('total')
+        total = price_comp.get("total")
         if not total:
             return False
-        
+
         # Check if amount exists and is a valid number
-        amount = total.get('amount')
+        amount = total.get("amount")
         if amount is None:
             return False
-        
+
         # Verify it's a valid number
         try:
             float(amount)
@@ -524,24 +650,31 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
         await super().async_added_to_hass()
-        
+
         if (last_state := await self.async_get_last_state()) is not None:
             self._monthly_total = last_state.attributes.get("monthly_total", 0.0)
-            self._processed_orders = set(last_state.attributes.get("processed_orders", []))
-            self._current_month = last_state.attributes.get("current_month", datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m"))
+            self._processed_orders = set(
+                last_state.attributes.get("processed_orders", [])
+            )
+            self._current_month = last_state.attributes.get(
+                "current_month",
+                datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m"),
+            )
             if last_reset_str := last_state.attributes.get("last_reset"):
                 self._last_reset = datetime.fromisoformat(last_reset_str)
-        
+
         self._check_and_reset_month()
         self._process_new_orders()
-        
+
         self._rohlik_account.register_callback(self.async_write_ha_state)
 
     def _check_and_reset_month(self) -> None:
         """Reset total if month changed."""
         current_month = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m")
         if current_month != self._current_month:
-            _LOGGER.info(f"Month changed from {self._current_month} to {current_month}, resetting monthly total")
+            _LOGGER.info(
+                f"Month changed from {self._current_month} to {current_month}, resetting monthly total"
+            )
             self._monthly_total = 0.0
             self._processed_orders = set()
             self._current_month = current_month
@@ -549,58 +682,70 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
 
     def _process_new_orders(self) -> None:
         """Process new orders and add to total.
-        
+
         Only processes orders that are delivered and closed (have final price).
         Uses order ID for unique identification.
         """
-        orders = self._rohlik_account.data.get('delivered_orders', [])
+        orders = self._rohlik_account.data.get("delivered_orders", [])
         if not orders:
             return
-        
-        current_month_pattern = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m-")
+
+        current_month_pattern = datetime.now(ZoneInfo("Europe/Prague")).strftime(
+            "%Y-%m-"
+        )
         new_orders_count = 0
-        
+
         for order in orders:
             try:
-                order_time = order.get('orderTime', '')
-                
+                order_time = order.get("orderTime", "")
+
                 # Only process orders from current month
                 if current_month_pattern not in order_time:
                     continue
-                
+
                 # Verify order has final price (delivered and closed)
                 if not self._is_order_final(order):
-                    _LOGGER.debug(f"Order {order.get('id')} does not have final price, skipping")
+                    _LOGGER.debug(
+                        f"Order {order.get('id')} does not have final price, skipping"
+                    )
                     continue
-                
+
                 # Get order ID (unique identifier)
-                order_id = order.get('id')
+                order_id = order.get("id")
                 if not order_id:
-                    _LOGGER.warning(f"Order missing ID, skipping: {order.get('orderTime')}")
+                    _LOGGER.warning(
+                        f"Order missing ID, skipping: {order.get('orderTime')}"
+                    )
                     continue
-                
+
                 order_key = str(order_id)
-                
+
                 # Skip if already processed
                 if order_key in self._processed_orders:
                     continue
-                
+
                 # Get the final price
-                amount = float(order['priceComposition']['total']['amount'])
-                
+                amount = float(order["priceComposition"]["total"]["amount"])
+
                 # Add to total and mark as processed
                 self._monthly_total += amount
                 self._processed_orders.add(order_key)
                 new_orders_count += 1
-                
-                _LOGGER.debug(f"Added order {order_id} with amount {amount} CZK. New total: {self._monthly_total} CZK")
-                
+
+                _LOGGER.debug(
+                    f"Added order {order_id} with amount {amount} CZK. New total: {self._monthly_total} CZK"
+                )
+
             except (KeyError, ValueError, TypeError) as e:
-                _LOGGER.warning(f"Skipping order due to error: {e}, order ID: {order.get('id')}")
+                _LOGGER.warning(
+                    f"Skipping order due to error: {e}, order ID: {order.get('id')}"
+                )
                 continue
-        
+
         if new_orders_count > 0:
-            _LOGGER.info(f"Processed {new_orders_count} new order(s). Monthly total: {self._monthly_total} CZK")
+            _LOGGER.info(
+                f"Processed {new_orders_count} new order(s). Monthly total: {self._monthly_total} CZK"
+            )
 
     @property
     def native_value(self) -> float | None:
@@ -617,7 +762,7 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
             "processed_orders": list(self._processed_orders),
             "current_month": self._current_month,
             "last_reset": self._last_reset.isoformat() if self._last_reset else None,
-            "processed_count": len(self._processed_orders)
+            "processed_count": len(self._processed_orders),
         }
 
     @property
@@ -637,7 +782,18 @@ class NoLimitOrders(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns remaining orders without limit."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('premiumLimits', {}).get('ordersWithoutPriceLimit', {}).get('remaining', 0)
+        return (
+            (
+                self._rohlik_account.data.get("login", {})
+                .get("data", {})
+                .get("user", {})
+                .get("premium", {})
+                .get("premiumLimits")
+                or {}
+            )
+            .get("ordersWithoutPriceLimit", {})
+            .get("remaining", 0)
+        )
 
     @property
     def icon(self) -> str:
@@ -659,7 +815,18 @@ class FreeExpressOrders(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns remaining free express orders."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('premiumLimits', {}).get('freeExpressLimit', {}).get('remaining', 0)
+        return (
+            (
+                self._rohlik_account.data.get("login", {})
+                .get("data", {})
+                .get("user", {})
+                .get("premium", {})
+                .get("premiumLimits")
+                or {}
+            )
+            .get("freeExpressLimit", {})
+            .get("remaining", 0)
+        )
 
     @property
     def icon(self) -> str:
@@ -681,16 +848,18 @@ class BagsAmountSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns number of reusable bags."""
-        return self._rohlik_account.data["bags"].get('current', 0)
+        return self._rohlik_account.data["bags"].get("current", 0)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns reusable bag details."""
         bags_data = self._rohlik_account.data["bags"]
-        extra_attr: dict = {"Max Bags": bags_data.get('max', 0)}
-        if bags_data.get('deposit', None):
-            extra_attr["Deposit Amount"] = bags_data.get('deposit').get('amount', 0)
-            extra_attr["Deposit Currency"] = bags_data.get('deposit').get('currency', 'CZK')
+        extra_attr: dict = {"Max Bags": bags_data.get("max", 0)}
+        if bags_data.get("deposit", None):
+            extra_attr["Deposit Amount"] = bags_data.get("deposit").get("amount", 0)
+            extra_attr["Deposit Currency"] = bags_data.get("deposit").get(
+                "currency", "CZK"
+            )
         return extra_attr
 
     @property
@@ -713,18 +882,29 @@ class PremiumDaysRemainingSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns premium days remaining."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('remainingDays', 0)
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("premium", {})
+            .get("remainingDays", 0)
+        )
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns premium details."""
-        premium_data = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {})
+        premium_data = (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("premium", {})
+        )
         if premium_data:
             return {
-                "Premium Type": premium_data.get('premiumMembershipType', ''),
-                "Payment Date": premium_data.get('recurrentPaymentDate', ''),
-                "Start Date": premium_data.get('startDate', ''),
-                "End Date": premium_data.get('endDate', '')
+                "Premium Type": premium_data.get("premiumMembershipType", ""),
+                "Payment Date": premium_data.get("recurrentPaymentDate", ""),
+                "Start Date": premium_data.get("startDate", ""),
+                "End Date": premium_data.get("endDate", ""),
             }
         return None
 
@@ -748,16 +928,16 @@ class CartPriceSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> float:
         """Returns total cart price."""
-        return self._rohlik_account.data.get('cart', {}).get('total_price', 0.0)
+        return self._rohlik_account.data.get("cart", {}).get("total_price", 0.0)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns cart details."""
-        cart_data = self._rohlik_account.data.get('cart', {})
+        cart_data = self._rohlik_account.data.get("cart", {})
         if cart_data:
             return {
-                "Total items": cart_data.get('total_items', 0),
-                "Can Order": cart_data.get('can_make_order', False)
+                "Total items": cart_data.get("total_items", 0),
+                "Can Order": cart_data.get("can_make_order", False),
             }
         return None
 
@@ -771,6 +951,7 @@ class CartPriceSensor(BaseEntity, SensorEntity):
     async def async_will_remove_from_hass(self) -> None:
         self._rohlik_account.remove_callback(self.async_write_ha_state)
 
+
 class NextOrderSince(BaseEntity, SensorEntity):
     """Sensor for start of delivery window of next order."""
 
@@ -781,7 +962,9 @@ class NextOrderSince(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns start of delivery window for the earliest order."""
-        earliest_order = get_earliest_order(self._rohlik_account.data.get('next_order', []))
+        earliest_order = get_earliest_order(
+            self._rohlik_account.data.get("next_order", [])
+        )
         if earliest_order:
             since_str = earliest_order.get("deliverySlot", {}).get("since", None)
             return parse_delivery_datetime_string(since_str)
@@ -797,6 +980,7 @@ class NextOrderSince(BaseEntity, SensorEntity):
     async def async_will_remove_from_hass(self) -> None:
         self._rohlik_account.remove_callback(self.async_write_ha_state)
 
+
 class NextOrderTill(BaseEntity, SensorEntity):
     """Sensor for finish of delivery window of next order."""
 
@@ -807,7 +991,9 @@ class NextOrderTill(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns end of delivery window for the earliest order."""
-        earliest_order = get_earliest_order(self._rohlik_account.data.get('next_order', []))
+        earliest_order = get_earliest_order(
+            self._rohlik_account.data.get("next_order", [])
+        )
         if earliest_order:
             till_str = earliest_order.get("deliverySlot", {}).get("till", None)
             return parse_delivery_datetime_string(till_str)
@@ -834,19 +1020,23 @@ class LastOrder(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime:
         """Returns remaining orders without limit."""
-        return datetime.strptime(self._rohlik_account.data["last_order"][0].get("orderTime", None), "%Y-%m-%dT%H:%M:%S.%f%z")
+        return datetime.strptime(
+            self._rohlik_account.data["last_order"][0].get("orderTime", None),
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+        )
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns last order details."""
-        last_order_data = self._rohlik_account.data['last_order'][0]
+        last_order_data = self._rohlik_account.data["last_order"][0]
         if len(last_order_data) > 0:
             return {
-                "Items": last_order_data.get('itemsCount', None),
-                "Price": last_order_data.get('priceComposition', {}).get('total', {}).get('amount', None),
+                "Items": last_order_data.get("itemsCount", None),
+                "Price": last_order_data.get("priceComposition", {})
+                .get("total", {})
+                .get("amount", None),
             }
         return None
-
 
     @property
     def icon(self) -> str:

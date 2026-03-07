@@ -1,4 +1,5 @@
 """Platform for binary sensor."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -10,27 +11,39 @@ from homeassistant.const import EntityCategory, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, ICON_REUSABLE, ICON_PARENTCLUB, ICON_PREMIUM, ICON_ORDER, ICON_TIMESLOT, ICON_CALENDAR_CHECK, \
-    ICON_CALENDAR_REMOVE
+from .const import (
+    DOMAIN,
+    ICON_REUSABLE,
+    ICON_PARENTCLUB,
+    ICON_PREMIUM,
+    ICON_ORDER,
+    ICON_TIMESLOT,
+    ICON_CALENDAR_CHECK,
+    ICON_CALENDAR_REMOVE,
+)
 from .entity import BaseEntity
 from .hub import RohlikAccount
 from .utils import get_earliest_order
 
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Add sensors for passed config_entry in HA."""
     rohlik_account: RohlikAccount = hass.data[DOMAIN][config_entry.entry_id]  # type: ignore[Any]
-    async_add_entities([
-        IsReusableSensor(rohlik_account),
-        IsParentSensor(rohlik_account),
-        IsPremiumSensor(rohlik_account),
-        IsOrderedSensor(rohlik_account),
-        IsReservedSensor(rohlik_account),
-        IsExpressAvailable(rohlik_account)
-    ])
+    async_add_entities(
+        [
+            IsReusableSensor(rohlik_account),
+            IsParentSensor(rohlik_account),
+            IsPremiumSensor(rohlik_account),
+            IsOrderedSensor(rohlik_account),
+            IsReservedSensor(rohlik_account),
+            IsExpressAvailable(rohlik_account),
+        ]
+    )
+
 
 class IsExpressAvailable(BaseEntity, BinarySensorEntity):
     _attr_translation_key = "is_express_available"
@@ -38,9 +51,22 @@ class IsExpressAvailable(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        if not self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('expressSlot', None):
+        if (
+            not self._rohlik_account.data["next_delivery_slot"]
+            .get("data", {})
+            .get("expressSlot", None)
+        ):
             return False
-        elif int(self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('expressSlot', {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)) == 0:
+        elif (
+            int(
+                self._rohlik_account.data["next_delivery_slot"]
+                .get("data", {})
+                .get("expressSlot", {})
+                .get("timeSlotCapacityDTO", {})
+                .get("totalFreeCapacityPercent", 0)
+            )
+            == 0
+        ):
             return False
         else:
             return True
@@ -72,7 +98,12 @@ class IsReusableSensor(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('reusablePackaging', False)
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("reusablePackaging", False)
+        )
 
     @property
     def icon(self) -> str:
@@ -98,7 +129,12 @@ class IsParentSensor(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('parentsClub', False)
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("parentsClub", False)
+        )
 
     @property
     def icon(self) -> str:
@@ -122,21 +158,38 @@ class IsPremiumSensor(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('active', False)
+        return (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("premium", {})
+            .get("active", False)
+        )
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        premium_data = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {})
+        premium_data = (
+            self._rohlik_account.data.get("login", {})
+            .get("data", {})
+            .get("user", {})
+            .get("premium", {})
+        )
         if premium_data:
             return {
-                "type": premium_data.get('premiumMembershipType'),
-                "payment_type": premium_data.get('premiumType'),
-                "expiration_date": premium_data.get('recurrentPaymentDate'),
-                "remaining_days": premium_data.get('remainingDays'),
-                "start_date": premium_data.get('startDate'),
-                "end_date": premium_data.get('endDate'),
-                "remaining_orders_without_limit": premium_data.get('premiumLimits', {}).get('ordersWithoutPriceLimit', {}).get('remaining'),
-                "remaining_free_express": premium_data.get('premiumLimits', {}).get('freeExpressLimit', {}).get('remaining')
+                "type": premium_data.get("premiumMembershipType"),
+                "payment_type": premium_data.get("premiumType"),
+                "expiration_date": premium_data.get("recurrentPaymentDate"),
+                "remaining_days": premium_data.get("remainingDays"),
+                "start_date": premium_data.get("startDate"),
+                "end_date": premium_data.get("endDate"),
+                "remaining_orders_without_limit": (
+                    premium_data.get("premiumLimits") or {}
+                )
+                .get("ordersWithoutPriceLimit", {})
+                .get("remaining"),
+                "remaining_free_express": (premium_data.get("premiumLimits") or {})
+                .get("freeExpressLimit", {})
+                .get("remaining"),
             }
         return None
 
@@ -162,16 +215,14 @@ class IsOrderedSensor(BaseEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         # Check if there's at least one order in the next_order list
-        return len(self._rohlik_account.data.get('next_order', [])) > 0
+        return len(self._rohlik_account.data.get("next_order", [])) > 0
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        next_orders = self._rohlik_account.data.get('next_order', [])
+        next_orders = self._rohlik_account.data.get("next_order", [])
         order = get_earliest_order(next_orders)
         if order:
-            return {
-                "order_data": order
-            }
+            return {"order_data": order}
         return None
 
     @property
@@ -195,11 +246,19 @@ class IsReservedSensor(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._rohlik_account.data.get('timeslot', {}).get('data', {}).get('active', False)
+        return (
+            self._rohlik_account.data.get("timeslot", {})
+            .get("data", {})
+            .get("active", False)
+        )
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        timeslot_data = self._rohlik_account.data.get('timeslot', {}).get('data', {}).get('reservationDetail', {})
+        timeslot_data = (
+            self._rohlik_account.data.get("timeslot", {})
+            .get("data", {})
+            .get("reservationDetail", {})
+        )
         if timeslot_data:
             return timeslot_data
         return None
