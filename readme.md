@@ -120,7 +120,7 @@ Events are sourced from upcoming orders and the last 50 delivered orders. Events
 | **`rohlikcz.search_product`** | Search for products available on Rohlík.cz by name |
 | **`rohlikcz.get_shopping_list`** | Retrieve products from a saved Rohlík.cz shopping list by its ID |
 | **`rohlikcz.get_cart_content`** | Get the current contents of your shopping cart |
-| **`rohlikcz.search_and_add`** | Search for a product by name and add it to your cart in one step |
+| **`rohlikcz.search_and_add_to_cart`** | Search for a product by name and add it to your cart in one step |
 | **`rohlikcz.update_data`** | Force an immediate data refresh from Rohlík.cz |
 
 ---
