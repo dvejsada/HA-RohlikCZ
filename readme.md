@@ -93,7 +93,7 @@ Install in one click via the Home Assistant Community Store:
 
 ### 📅 Calendar
 
-**`calendar.{device_name}_orders`** — Shows all upcoming and recent delivery windows as calendar events.
+**Orders Calendar** — Shows all upcoming and recent delivery windows as calendar events (entity ID typically ending in `_orders_calendar`, for example `calendar.rohlikcz_orders_calendar`; your actual ID may vary).
 
 | Field | Value |
 |-------|-------|
