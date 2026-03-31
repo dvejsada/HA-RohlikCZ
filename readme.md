@@ -125,45 +125,6 @@ Events are sourced from upcoming orders and the last 50 delivered orders. Events
 
 ---
 
-## 💡 Automation Ideas
-
-<details>
-<summary><strong>🚪 Turn on porch light when delivery arrives</strong></summary>
-
-```yaml
-alias: Turn on porch light during Rohlik delivery
-triggers:
-  - trigger: state
-    entity_id: calendar.rohlik_orders
-    to: "on"
-actions:
-  - action: light.turn_on
-    target:
-      entity_id: light.porch
-```
-</details>
-
-<details>
-<summary><strong>📦 Notify when next delivery slot is available</strong></summary>
-
-```yaml
-alias: Notify when Rohlik delivery slot opens
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.rohlik_next_order
-    to: "on"
-actions:
-  - action: notify.mobile_app
-    data:
-      title: "🛒 Rohlík.cz order confirmed!"
-      message: >
-        Your delivery is scheduled for
-        {{ states('sensor.rohlik_delivery_slot_start') }}.
-```
-</details>
-
----
-
 ## 🔄 Data Updates
 
 Data is refreshed from Rohlík.cz **every 10 minutes** automatically. The update covers account details, premium status, delivery slots, shopping cart, and order history.
