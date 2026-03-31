@@ -3,7 +3,6 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/v/release/dvejsada/HA-RohlikCZ)](https://github.com/dvejsada/HA-RohlikCZ/releases)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-%3E%3D2024.12-blue)](https://www.home-assistant.io/)
-[![License](https://img.shields.io/github/license/dvejsada/HA-RohlikCZ)](LICENSE)
 
 Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home Assistant! Track deliveries, monitor your cart, automate shopping, and never miss a delivery window — all from your smart home dashboard.
 
@@ -20,7 +19,7 @@ Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home 
 - 📦 **Track your next delivery** — see exactly when your groceries arrive, right on your dashboard
 - 🛒 **Monitor your shopping cart** — keep an eye on your cart total without opening the app
 - ⏰ **Automate delivery reminders** — turn on porch lights or trigger a notification when a delivery window starts
-- 🔍 **Add products to cart by voice or barcode** — use Home Assistant automations to add items hands-free
+- 🔍 **Add products to cart by voice** — use Home Assistant automations to add items hands-free
 - 📅 **Calendar view** — all your delivery windows visible in the Home Assistant calendar
 - 💳 **Account overview** — credit balance, premium status, reusable bag count, and more
 
@@ -161,14 +160,6 @@ actions:
         Your delivery is scheduled for
         {{ states('sensor.rohlik_delivery_slot_start') }}.
 ```
-</details>
-
-<details>
-<summary><strong>🔍 Add product to cart by barcode scan</strong></summary>
-
-See the full example in [`automations/add_to_cart.yaml`](automations/add_to_cart.yaml).  
-This automation uses a barcode scanner, looks up the product ID, and calls `rohlikcz.add_to_cart` automatically.
-
 </details>
 
 ---
