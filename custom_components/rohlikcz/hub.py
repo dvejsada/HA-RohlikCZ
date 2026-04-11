@@ -177,6 +177,10 @@ class OrderStore:
         """Count of orders for a given year."""
         return sum(1 for o in self._data["orders"].values() if o["date"].startswith(year))
 
+    def yearly_enriched_count(self, year: str) -> int:
+        """Count of enriched orders (with item details) for a given year."""
+        return sum(1 for o in self._data["orders"].values() if o["date"].startswith(year) and "items" in o)
+
     def alltime_total(self) -> float:
         """Sum of all order amounts."""
         return sum(o["amount"] for o in self._data["orders"].values())

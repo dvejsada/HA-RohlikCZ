@@ -758,12 +758,12 @@ class CategorySpendingYearly(BaseEntity, SensorEntity):
         year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
         categories = store.category_totals(year=year, level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
         if not categories:
-            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
         return {
             "year": year,
             "total_count": len(categories),
             "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
+            "enriched_orders": store.yearly_enriched_count(year),
             "total_orders": store.yearly_count(year),
         }
 
@@ -844,12 +844,12 @@ class CategorySpendingL0Yearly(BaseEntity, SensorEntity):
         year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
         categories = store.category_totals(year=year, level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
         if not categories:
-            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
         return {
             "year": year,
             "total_count": len(categories),
             "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
+            "enriched_orders": store.yearly_enriched_count(year),
             "total_orders": store.yearly_count(year),
         }
 
@@ -930,12 +930,12 @@ class CategorySpendingL2Yearly(BaseEntity, SensorEntity):
         year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
         categories = store.category_totals(year=year, level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
         if not categories:
-            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
         return {
             "year": year,
             "total_count": len(categories),
             "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
+            "enriched_orders": store.yearly_enriched_count(year),
             "total_orders": store.yearly_count(year),
         }
 
@@ -1016,12 +1016,12 @@ class CategorySpendingL3Yearly(BaseEntity, SensorEntity):
         year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
         categories = store.category_totals(year=year, level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
         if not categories:
-            return {"year": year, "enriched_orders": store.enriched_count, "total_orders": store.yearly_count(year)}
+            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
         return {
             "year": year,
             "total_count": len(categories),
             "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
+            "enriched_orders": store.yearly_enriched_count(year),
             "total_orders": store.yearly_count(year),
         }
 
