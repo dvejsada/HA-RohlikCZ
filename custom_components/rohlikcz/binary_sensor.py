@@ -38,12 +38,14 @@ class IsExpressAvailable(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        if not self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('expressSlot', None):
+        slot_data = (self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}
+        express_slot = slot_data.get('expressSlot')
+        if not express_slot:
             return False
-        elif int(self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('expressSlot', {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)) == 0:
+        capacity = (express_slot.get("timeSlotCapacityDTO") or {}).get("totalFreeCapacityPercent", 0)
+        if int(capacity) == 0:
             return False
-        else:
-            return True
+        return True
 
     @property
     def icon(self) -> str:
@@ -122,11 +124,11 @@ class IsPremiumSensor(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('active', False)
+        return (self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}).get('active', False)
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        premium_data = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {})
+        premium_data = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}
         if premium_data:
             return {
                 "type": premium_data.get('premiumMembershipType'),
@@ -135,8 +137,8 @@ class IsPremiumSensor(BaseEntity, BinarySensorEntity):
                 "remaining_days": premium_data.get('remainingDays'),
                 "start_date": premium_data.get('startDate'),
                 "end_date": premium_data.get('endDate'),
-                "remaining_orders_without_limit": premium_data.get('premiumLimits', {}).get('ordersWithoutPriceLimit', {}).get('remaining'),
-                "remaining_free_express": premium_data.get('premiumLimits', {}).get('freeExpressLimit', {}).get('remaining')
+                "remaining_orders_without_limit": (premium_data.get('premiumLimits') or {}).get('ordersWithoutPriceLimit', {}).get('remaining'),
+                "remaining_free_express": (premium_data.get('premiumLimits') or {}).get('freeExpressLimit', {}).get('remaining')
             }
         return None
 
@@ -195,11 +197,11 @@ class IsReservedSensor(BaseEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self._rohlik_account.data.get('timeslot', {}).get('data', {}).get('active', False)
+        return ((self._rohlik_account.data.get('timeslot') or {}).get('data') or {}).get('active', False)
 
     @property
     def extra_state_attributes(self) -> dict | None:
-        timeslot_data = self._rohlik_account.data.get('timeslot', {}).get('data', {}).get('reservationDetail', {})
+        timeslot_data = ((self._rohlik_account.data.get('timeslot') or {}).get('data') or {}).get('reservationDetail', {})
         if timeslot_data:
             return timeslot_data
         return None

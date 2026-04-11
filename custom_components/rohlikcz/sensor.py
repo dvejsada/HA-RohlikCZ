@@ -60,7 +60,7 @@ async def async_setup_entry(
 
 
     # Only add premium days remaining if the user is premium
-    if rohlik_hub.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('active', False):
+    if (rohlik_hub.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}).get('active', False):
         entities.append(PremiumDaysRemainingSensor(rohlik_hub))
 
     async_add_entities(entities)
@@ -207,7 +207,7 @@ class FirstExpressSlot(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns datetime of the express slot."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
         state = None
         for slot in preselected_slots:
             if slot.get("type", "") == "EXPRESS":
@@ -219,7 +219,7 @@ class FirstExpressSlot(BaseEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
         extra_attrs = None
         for slot in preselected_slots:
             if slot.get("type", "") == "EXPRESS":
@@ -260,7 +260,7 @@ class FirstStandardSlot(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns datetime of the standard slot."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
         state = None
         for slot in preselected_slots:
             if slot.get("type", "") == "FIRST":
@@ -272,7 +272,7 @@ class FirstStandardSlot(BaseEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
         extra_attrs = None
         for slot in preselected_slots:
             if slot.get("type", "") == "FIRST":
@@ -312,7 +312,7 @@ class FirstEcoSlot(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Returns datetime of the eco slot."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
         state = None
         for slot in preselected_slots:
             if slot.get("type", "") == "ECO":
@@ -323,7 +323,7 @@ class FirstEcoSlot(BaseEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = self._rohlik_account.data["next_delivery_slot"].get('data', {}).get('preselectedSlots', [])
+        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
         extra_attrs = None
         for slot in preselected_slots:
             if slot.get("type", "") == "ECO":
@@ -358,12 +358,12 @@ class FirstDeliverySensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Returns first available delivery time."""
-        return self._rohlik_account.data.get('delivery', {}).get('data', {}).get('firstDeliveryText', {}).get('default', 'Unknown')
+        return ((self._rohlik_account.data.get('delivery') or {}).get('data') or {}).get('firstDeliveryText', {}).get('default', 'Unknown')
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns delivery location."""
-        delivery_data = self._rohlik_account.data.get('delivery', {}).get('data', {})
+        delivery_data = (self._rohlik_account.data.get('delivery') or {}).get('data') or {}
         if delivery_data:
             return {
                 "delivery_location": delivery_data.get('deliveryLocationText', ''),
@@ -637,7 +637,8 @@ class NoLimitOrders(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns remaining orders without limit."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('premiumLimits', {}).get('ordersWithoutPriceLimit', {}).get('remaining', 0)
+        premium = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}
+        return (premium.get('premiumLimits') or {}).get('ordersWithoutPriceLimit', {}).get('remaining', 0)
 
     @property
     def icon(self) -> str:
@@ -659,7 +660,8 @@ class FreeExpressOrders(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns remaining free express orders."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('premiumLimits', {}).get('freeExpressLimit', {}).get('remaining', 0)
+        premium = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}
+        return (premium.get('premiumLimits') or {}).get('freeExpressLimit', {}).get('remaining', 0)
 
     @property
     def icon(self) -> str:
@@ -713,12 +715,12 @@ class PremiumDaysRemainingSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         """Returns premium days remaining."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {}).get('remainingDays', 0)
+        return (self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}).get('remainingDays', 0)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns premium details."""
-        premium_data = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium', {})
+        premium_data = self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}
         if premium_data:
             return {
                 "Premium Type": premium_data.get('premiumMembershipType', ''),
@@ -748,12 +750,12 @@ class CartPriceSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> float:
         """Returns total cart price."""
-        return self._rohlik_account.data.get('cart', {}).get('total_price', 0.0)
+        return (self._rohlik_account.data.get('cart') or {}).get('total_price', 0.0)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns cart details."""
-        cart_data = self._rohlik_account.data.get('cart', {})
+        cart_data = self._rohlik_account.data.get('cart') or {}
         if cart_data:
             return {
                 "Total items": cart_data.get('total_items', 0),
