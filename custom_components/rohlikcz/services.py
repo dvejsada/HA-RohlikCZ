@@ -10,7 +10,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN, ATTR_CONFIG_ENTRY_ID, ATTR_PRODUCT_ID, ATTR_QUANTITY, ATTR_PRODUCT_NAME, \
     ATTR_SHOPPING_LIST_ID, ATTR_LIMIT, ATTR_FAVOURITE_ONLY, SERVICE_ADD_TO_CART, SERVICE_SEARCH_PRODUCT, SERVICE_GET_SHOPPING_LIST, \
-    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA
+    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA, SERVICE_FETCH_ORDER_HISTORY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +131,36 @@ def register_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(f"Failed to update data: {err}")
 
 
+    async def async_fetch_order_history(call: ServiceCall) -> None:
+        """Fetch complete order history from Rohlik."""
+        config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
+
+        if config_entry_id not in hass.data[DOMAIN]:
+            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
+
+        account = hass.data[DOMAIN][config_entry_id]
+        try:
+            result = await account.fetch_full_order_history(hass=hass)
+            _LOGGER.info(f"Fetch order history result: {result}")
+        except Exception as err:
+            _LOGGER.error(f"Failed to fetch order history: {err}")
+            raise HomeAssistantError(f"Failed to fetch order history: {err}")
+
+    async def async_enrich_orders(call: ServiceCall) -> None:
+        """Enrich stored orders with item details and product categories."""
+        config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
+
+        if config_entry_id not in hass.data[DOMAIN]:
+            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
+
+        account = hass.data[DOMAIN][config_entry_id]
+        try:
+            result = await account.enrich_order_details(hass=hass)
+            _LOGGER.info(f"Enrich orders result: {result}")
+        except Exception as err:
+            _LOGGER.error(f"Failed to enrich orders: {err}")
+            raise HomeAssistantError(f"Failed to enrich orders: {err}")
+
     # Register the services
     hass.services.async_register(
         DOMAIN,
@@ -200,3 +230,25 @@ def register_services(hass: HomeAssistant) -> None:
         }),
         supports_response=SupportsResponse.NONE
     )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_FETCH_ORDER_HISTORY,
+        async_fetch_order_history,
+        schema=vol.Schema({
+            vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        }),
+        supports_response=SupportsResponse.NONE
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "enrich_orders",
+        async_enrich_orders,
+        schema=vol.Schema({
+            vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        }),
+        supports_response=SupportsResponse.NONE
+    )
+
+

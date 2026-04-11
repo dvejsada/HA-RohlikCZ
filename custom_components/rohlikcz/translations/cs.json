@@ -12,6 +12,19 @@
           "username": "Váš e-mail pro přihlášení do Rohlik.cz",
           "password": "Vaše heslo pro přihlášení do Rohlik.cz"
         }
+      },
+      "analytics": {
+        "title": "Analýza nákupů",
+        "description": "Vyberte, které úrovně útrat chcete sledovat. Pro každou vybranou úroveň se vytvoří senzory pro tento rok a celkově. Výběr jakékoli možnosti spustí jednorázové stažení historie objednávek (může trvat několik minut).",
+        "data": {
+          "analytics": "Úrovně analýzy",
+          "top_n": "Top položek v senzorech",
+          "hide_discontinued": "Skrýt zrušené produkty"
+        },
+        "data_description": {
+          "top_n": "Kolik top položek zobrazit v atributech senzorů (podle útraty). Výchozí: 10.",
+          "hide_discontinued": "Vyloučit zrušené produkty z top kategorií a položek."
+        }
       }
     },
     "error": {
@@ -21,6 +34,34 @@
     },
     "abort": {
       "already_configured": "Účet je již nakonfigurován"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Analýza nákupů",
+        "description": "Vyberte, které úrovně útrat chcete sledovat. Změny se projeví po reloadu.",
+        "data": {
+          "analytics": "Úrovně analýzy",
+          "top_n": "Top položek v senzorech",
+          "hide_discontinued": "Skrýt zrušené produkty"
+        },
+        "data_description": {
+          "top_n": "Kolik top položek zobrazit v atributech senzorů (podle útraty). Výchozí: 10.",
+          "hide_discontinued": "Vyloučit zrušené produkty z top kategorií a položek."
+        }
+      }
+    }
+  },
+  "selector": {
+    "analytics": {
+      "options": {
+        "categories_l0": "Nejvyšší kategorie (např. Nápoje, Drogerie, Ovoce a zelenina)",
+        "categories_l1": "Střední kategorie (např. Horké nápoje, Čisticí prostředky, Zelenina)",
+        "categories_l2": "Podrobné kategorie (např. Káva, Univerzální čistič, Rajčata)",
+        "categories_l3": "Nejpodrobnější kategorie (např. Zrnková káva, Ve spreji)",
+        "per_item": "Útrata po položkách (např. Tchibo Barista, Savo sprej)"
+      }
     }
   },
   "entity": {
@@ -132,6 +173,44 @@
       "monthly_spent": {
         "name": "Měsíční útrata",
         "unit_of_measurement": "Kč"
+      },
+      "yearly_spent": {
+        "name": "Roční útrata",
+        "unit_of_measurement": "Kč"
+      },
+      "alltime_spent": {
+        "name": "Celková útrata",
+        "unit_of_measurement": "Kč"
+      },
+      "categories_l0_this_year": {
+        "name": "Hlavní kategorie tento rok"
+      },
+      "categories_l0_all_time": {
+        "name": "Hlavní kategorie celkem"
+      },
+      "categories_this_year": {
+        "name": "Kategorie tento rok"
+      },
+      "categories_all_time": {
+        "name": "Kategorie celkem"
+      },
+      "categories_l2_this_year": {
+        "name": "Podrobné kategorie tento rok"
+      },
+      "categories_l2_all_time": {
+        "name": "Podrobné kategorie celkem"
+      },
+      "categories_l3_this_year": {
+        "name": "Specifické kategorie tento rok"
+      },
+      "categories_l3_all_time": {
+        "name": "Specifické kategorie celkem"
+      },
+      "items_this_year": {
+        "name": "Položky tento rok"
+      },
+      "items_all_time": {
+        "name": "Položky celkem"
       }
     },
     "todo": {

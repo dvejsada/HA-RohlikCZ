@@ -35,7 +35,10 @@ ICON_CALENDAR_REMOVE = "mdi:calendar-remove"
 ICON_INFO = "mdi:information-outline"
 ICON_DELIVERY_TIME = "mdi:timer-sand"
 ICON_MONTHLY_SPENT = "mdi:cash-register"
+ICON_YEARLY_SPENT = "mdi:calendar-text"
+ICON_ALLTIME_SPENT = "mdi:chart-line"
 ICON_DELIVERY_CALENDAR = "mdi:calendar-clock"
+ICON_CATEGORY_SPENDING = "mdi:shape"
 
 """ Service attributes """
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
@@ -53,3 +56,19 @@ SERVICE_GET_SHOPPING_LIST = "get_shopping_list"
 SERVICE_GET_CART_CONTENT = "get_cart_content"
 SERVICE_SEARCH_AND_ADD_PRODUCT = "search_and_add_to_cart"
 SERVICE_UPDATE_DATA = "update_data"
+SERVICE_FETCH_ORDER_HISTORY = "fetch_order_history"
+
+""" Analytics options """
+CONF_ANALYTICS = "analytics"
+CONF_TOP_N = "top_n"
+ANALYTICS_OPTIONS = [
+    "categories_l0",
+    "categories_l1",
+    "categories_l2",
+    "categories_l3",
+    "per_item",
+]
+DEFAULT_ANALYTICS = []  # Nothing enabled by default (opt-in)
+DEFAULT_TOP_N = 10
+CONF_HIDE_DISCONTINUED = "hide_discontinued"
+DEFAULT_HIDE_DISCONTINUED = True

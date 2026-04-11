@@ -231,6 +231,165 @@ class RohlikCZAPI:
             await self.logout(session)
             await self._run_in_executor(session.close)
 
+    async def get_delivered_orders_page(self, session, offset: int = 0, limit: int = 50) -> list:
+        """Fetch a page of delivered orders using an existing authenticated session."""
+        url = f"{BASE_URL}/api/v3/orders/delivered?offset={offset}&limit={limit}"
+        try:
+            response = await self._run_in_executor(session.get, url)
+            response.raise_for_status()
+            return response.json()
+        except RequestException as err:
+            _LOGGER.error(f"Error fetching delivered orders page (offset={offset}): {err}")
+            return []
+
+    async def get_order_detail(self, session, order_id: str) -> dict | None:
+        """Fetch detailed order info including items for a single order."""
+        url = f"{BASE_URL}/api/v3/orders/{order_id}"
+        try:
+            response = await self._run_in_executor(session.get, url)
+            response.raise_for_status()
+            return response.json()
+        except RequestException as err:
+            _LOGGER.error(f"Error fetching order detail for {order_id}: {err}")
+            return None
+
+    async def get_product_categories(self, session, product_id: int) -> list | None:
+        """Fetch category hierarchy for a product. Returns None for 404 (discontinued)."""
+        url = f"{BASE_URL}/api/v1/products/{product_id}/categories"
+        try:
+            response = await self._run_in_executor(session.get, url)
+            if response.status_code == 404:
+                return None  # Product no longer exists
+            response.raise_for_status()
+            data = response.json()
+            return data.get("categories", [])
+        except RequestException as err:
+            _LOGGER.debug(f"Could not fetch categories for product {product_id}: {err}")
+            return []
+
+    async def get_product_detail(self, session, product_id: int) -> dict | None:
+        """Fetch product detail including brand."""
+        url = f"{BASE_URL}/api/v1/products/{product_id}"
+        try:
+            response = await self._run_in_executor(session.get, url)
+            response.raise_for_status()
+            return response.json()
+        except RequestException as err:
+            _LOGGER.debug(f"Could not fetch product detail for {product_id}: {err}")
+            return None
+
+    async def enrich_orders_with_items(self, order_ids: list[str]) -> dict[str, list]:
+        """Fetch item details for a list of order IDs. Returns {order_id: items_list}."""
+        session = requests.Session()
+        results = {}
+        try:
+            await self.login(session)
+        except Exception as err:
+            _LOGGER.error(f"Login failed for order enrichment: {err}")
+            await self._run_in_executor(session.close)
+            return results
+
+        try:
+            for i, order_id in enumerate(order_ids):
+                try:
+                    detail = await self.get_order_detail(session, order_id)
+                    if detail and detail.get("items"):
+                        items = []
+                        for item in detail["items"]:
+                            items.append({
+                                "id": item.get("id"),
+                                "name": item.get("name", "Unknown"),
+                                "quantity": item.get("amount", 1),
+                                "price": item.get("priceComposition", {}).get("total", {}).get("amount", 0),
+                                "unit_price": item.get("priceComposition", {}).get("unit", {}).get("amount", 0),
+                                "textual_amount": item.get("textualAmount", ""),
+                            })
+                        results[order_id] = items
+                except Exception as err:
+                    _LOGGER.warning(f"Failed to fetch items for order {order_id}: {err}")
+                if i % 50 == 0 and i > 0:
+                    _LOGGER.info(f"Fetched items for {i}/{len(order_ids)} orders")
+                await asyncio.sleep(0.2)
+            _LOGGER.info(f"Item fetch complete: {len(results)}/{len(order_ids)} orders")
+            return results
+        except Exception as err:
+            _LOGGER.error(f"Error during order item fetch: {err}")
+            return results
+        finally:
+            try:
+                await self.logout(session)
+            except Exception:
+                pass
+            await self._run_in_executor(session.close)
+
+    async def fetch_product_categories_batch(self, product_ids: list[int], progress_callback=None) -> dict[int, list]:
+        """Fetch categories for a batch of product IDs. Returns {product_id: categories_list}."""
+        session = requests.Session()
+        results = {}
+        try:
+            await self.login(session)
+        except Exception as err:
+            _LOGGER.error(f"Login failed for category fetch: {err}")
+            await self._run_in_executor(session.close)
+            return results
+
+        try:
+            for i, pid in enumerate(product_ids):
+                try:
+                    cats = await self.get_product_categories(session, pid)
+                    if cats is None:
+                        # Product discontinued (404) — mark with sentinel category
+                        results[pid] = [{"level": 1, "name": "Discontinued"}]
+                    elif cats:
+                        results[pid] = cats
+                except Exception as err:
+                    _LOGGER.debug(f"Failed to fetch categories for product {pid}: {err}")
+                if progress_callback and i % 50 == 0:
+                    await progress_callback(i, len(product_ids))
+                await asyncio.sleep(0.2)
+            _LOGGER.info(f"Category fetch complete: {len(results)}/{len(product_ids)} products")
+            return results
+        except Exception as err:
+            _LOGGER.error(f"Error during category fetch: {err}")
+            return results
+        finally:
+            try:
+                await self.logout(session)
+            except Exception:
+                pass
+            await self._run_in_executor(session.close)
+
+    async def fetch_all_delivered_orders(self) -> list:
+        """Fetch ALL delivered orders by paginating through the API. Returns list of all orders."""
+        session = requests.Session()
+        all_orders = []
+        offset = 0
+        limit = 50
+
+        try:
+            await self.login(session)
+
+            while True:
+                page = await self.get_delivered_orders_page(session, offset, limit)
+                if not page:
+                    break
+                all_orders.extend(page)
+                _LOGGER.info(f"Fetched {len(all_orders)} orders so far (offset={offset})")
+                if len(page) < limit:
+                    break
+                offset += limit
+                # Rate limit: 200ms between pages
+                await asyncio.sleep(0.2)
+
+            return all_orders
+
+        except RequestException as err:
+            _LOGGER.error(f"Error during full order history fetch: {err}")
+            return all_orders
+        finally:
+            await self.logout(session)
+            await self._run_in_executor(session.close)
+
     async def add_to_cart(self, product_list: list[dict]) -> dict:
         """
         Add multiple products to the shopping cart.

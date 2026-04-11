@@ -12,6 +12,19 @@
           "username": "Your Rohlik.cz account email",
           "password": "Your Rohlik.cz account password"
         }
+      },
+      "analytics": {
+        "title": "Spending Analytics",
+        "description": "Choose which spending breakdowns to track. Each selected level creates sensors for this year and all time. Selecting any option will trigger a one-time download of your order history (may take several minutes).",
+        "data": {
+          "analytics": "Analytics levels",
+          "top_n": "Top items in sensors",
+          "hide_discontinued": "Hide discontinued products"
+        },
+        "data_description": {
+          "top_n": "How many top items to show in sensor attributes (by spending). Default: 10.",
+          "hide_discontinued": "Exclude discontinued products from top categories and items."
+        }
       }
     },
     "error": {
@@ -21,6 +34,34 @@
     },
     "abort": {
       "already_configured": "Account is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Spending Analytics",
+        "description": "Choose which spending breakdowns to track. Changes take effect after reload.",
+        "data": {
+          "analytics": "Analytics levels",
+          "top_n": "Top items in sensors",
+          "hide_discontinued": "Hide discontinued products"
+        },
+        "data_description": {
+          "top_n": "How many top items to show in sensor attributes (by spending). Default: 10.",
+          "hide_discontinued": "Exclude discontinued products from top categories and items."
+        }
+      }
+    }
+  },
+  "selector": {
+    "analytics": {
+      "options": {
+        "categories_l0": "Top-level categories (e.g. Drinks, Drugstore, Fruit & Vegetables)",
+        "categories_l1": "Mid-level categories (e.g. Hot drinks, Cleaning products, Vegetables)",
+        "categories_l2": "Detailed categories (e.g. Coffee, Universal cleaner, Tomatoes)",
+        "categories_l3": "Most specific categories (e.g. Bean coffee, Spray cleaner)",
+        "per_item": "Per-item spending (e.g. Tchibo Barista, Savo Spray)"
+      }
     }
   },
   "entity": {
@@ -132,6 +173,44 @@
       "monthly_spent": {
         "name": "Spent This Month",
         "unit_of_measurement": "CZK"
+      },
+      "yearly_spent": {
+        "name": "Spent This Year",
+        "unit_of_measurement": "CZK"
+      },
+      "alltime_spent": {
+        "name": "Spent All Time",
+        "unit_of_measurement": "CZK"
+      },
+      "categories_l0_this_year": {
+        "name": "Top Categories This Year"
+      },
+      "categories_l0_all_time": {
+        "name": "Top Categories All Time"
+      },
+      "categories_this_year": {
+        "name": "Categories This Year"
+      },
+      "categories_all_time": {
+        "name": "Categories All Time"
+      },
+      "categories_l2_this_year": {
+        "name": "Detailed Categories This Year"
+      },
+      "categories_l2_all_time": {
+        "name": "Detailed Categories All Time"
+      },
+      "categories_l3_this_year": {
+        "name": "Specific Categories This Year"
+      },
+      "categories_l3_all_time": {
+        "name": "Specific Categories All Time"
+      },
+      "items_this_year": {
+        "name": "Items This Year"
+      },
+      "items_all_time": {
+        "name": "Items All Time"
       }
     },
     "todo": {
