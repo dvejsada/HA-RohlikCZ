@@ -107,7 +107,12 @@ class OrderStore:
                 continue
 
             price_comp = order.get("priceComposition", {})
+            if not isinstance(price_comp, dict):
+                continue
+
             total = price_comp.get("total", {})
+            if not isinstance(total, dict):
+                continue
             amount = total.get("amount")
             if amount is None:
                 continue
