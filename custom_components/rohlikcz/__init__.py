@@ -50,16 +50,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info("Platforms setup complete")
 
-    # If analytics enabled, fetch full order history + enrich in background
-    if analytics:
-        async def _fetch_history():
-            try:
-                if rohlik_hub.order_store:
-                    await rohlik_hub.fetch_full_order_history(hass=hass)
-            except Exception as err:
-                _LOGGER.error("Background order history fetch failed: %s", err)
+    # If analytics enabled, run initial backfill or resume interrupted enrichment
+    if analytics and rohlik_hub.order_store:
+        store = rohlik_hub.order_store
+        needs_backfill = not store.backfill_complete
+        needs_enrichment = (
+            store.backfill_complete
+            and (store.unenriched_order_ids or store.uncategorized_product_ids())
+        )
 
-        entry.async_create_background_task(hass, _fetch_history(), "rohlik_fetch_history")
+        if needs_backfill:
+            async def _fetch_history():
+                try:
+                    await rohlik_hub.fetch_full_order_history(hass=hass)
+                except Exception as err:
+                    _LOGGER.error("Background order history fetch failed: %s", err)
+
+            entry.async_create_background_task(hass, _fetch_history(), "rohlik_fetch_history")
+        elif needs_enrichment:
+            async def _resume_enrichment():
+                try:
+                    await rohlik_hub.enrich_order_details(hass=hass)
+                except Exception as err:
+                    _LOGGER.error("Background enrichment resume failed: %s", err)
+
+            entry.async_create_background_task(hass, _resume_enrichment(), "rohlik_resume_enrichment")
 
     # Reload when options change (user reconfigures analytics)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))

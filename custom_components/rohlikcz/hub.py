@@ -51,7 +51,7 @@ class OrderStore:
 
     def __init__(self, storage_dir: str, user_id: str, hass: HomeAssistant):
         self._path = os.path.join(storage_dir, f"rohlikcz_{user_id}_orders.json")
-        self._data = {"version": 2, "user_id": user_id, "tracking_since": None, "orders": {}, "product_categories": {}}
+        self._data = {"version": 3, "user_id": user_id, "tracking_since": None, "backfill_complete": False, "orders": {}, "product_categories": {}}
         self._hass = hass
 
     @classmethod
@@ -67,15 +67,28 @@ class OrderStore:
             try:
                 with open(self._path, "r") as f:
                     self._data = json.load(f)
+                migrated = False
                 # Migrate v1 → v2
                 if self._data.get("version", 1) < 2:
                     self._data["version"] = 2
                     if "product_categories" not in self._data:
                         self._data["product_categories"] = {}
-                    self._save_sync()
+                    migrated = True
                     _LOGGER.info("Migrated order store from v1 to v2")
                 elif "product_categories" not in self._data:
                     self._data["product_categories"] = {}
+                # Migrate v2 → v3 (add backfill_complete flag)
+                if self._data.get("version", 1) < 3:
+                    self._data["version"] = 3
+                    # Existing stores with tracking_since already set had a
+                    # successful backfill in a prior run; mark it complete so
+                    # we don't re-download everything on next restart.
+                    if "backfill_complete" not in self._data:
+                        self._data["backfill_complete"] = self._data.get("tracking_since") is not None
+                    migrated = True
+                    _LOGGER.info("Migrated order store from v2 to v3")
+                if migrated:
+                    self._save_sync()
             except (json.JSONDecodeError, OSError) as err:
                 _LOGGER.error(f"Failed to load order store: {err}")
 
@@ -142,6 +155,15 @@ class OrderStore:
     @property
     def tracking_since(self) -> str | None:
         return self._data.get("tracking_since")
+
+    @property
+    def backfill_complete(self) -> bool:
+        """Whether the initial full order history download has finished."""
+        return self._data.get("backfill_complete", False)
+
+    def mark_backfill_complete(self) -> None:
+        """Mark the initial backfill as done (caller must async_save)."""
+        self._data["backfill_complete"] = True
 
     def yearly_total(self, year: str) -> float:
         """Sum of order amounts for a given year (e.g. '2026')."""
@@ -427,6 +449,10 @@ class RohlikAccount:
         if self._order_store:
             enrich_stats = await self.enrich_order_details(hass=hass)
             enrich_stats["new_orders"] = new_orders
+            # Mark backfill as done so we don't re-download on next restart
+            if not self._order_store.backfill_complete:
+                self._order_store.mark_backfill_complete()
+                await self._order_store.async_save()
             return enrich_stats
 
         return {"total_orders": 0, "new_orders": 0}
