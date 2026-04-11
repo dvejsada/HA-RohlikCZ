@@ -5,11 +5,11 @@
         "title": "Rohlik.cz Account",
         "description": "Enter your Rohlik.cz login credentials.",
         "data": {
-          "username": "Email",
+          "email": "Email",
           "password": "Password"
         },
         "data_description": {
-          "username": "Your Rohlik.cz account email",
+          "email": "Your Rohlik.cz account email",
           "password": "Your Rohlik.cz account password"
         }
       },

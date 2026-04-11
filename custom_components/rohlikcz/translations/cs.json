@@ -5,11 +5,11 @@
         "title": "Účet Rohlik.cz",
         "description": "Zadejte své přihlašovací údaje do Rohlik.cz.",
         "data": {
-          "username": "E-mail",
+          "email": "E-mail",
           "password": "Heslo"
         },
         "data_description": {
-          "username": "Váš e-mail pro přihlášení do Rohlik.cz",
+          "email": "Váš e-mail pro přihlášení do Rohlik.cz",
           "password": "Vaše heslo pro přihlášení do Rohlik.cz"
         }
       },
