@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import os
@@ -337,6 +338,7 @@ class RohlikAccount:
         self.data: dict = {}
         self._callbacks: set[Callable[[], None]] = set()
         self._order_store: OrderStore | None = None
+        self._store_lock = asyncio.Lock()
         self._analytics: list[str] = analytics or []
         self._top_n: int = top_n
         self._hide_discontinued: bool = hide_discontinued
@@ -404,9 +406,11 @@ class RohlikAccount:
 
         # Process delivered orders into persistent store and auto-enrich new ones
         if self._analytics and self._order_store and self.data.get("delivered_orders"):
-            new = self._order_store.process_orders(self.data["delivered_orders"])
+            async with self._store_lock:
+                new = self._order_store.process_orders(self.data["delivered_orders"])
+                if new > 0:
+                    await self._order_store.async_save()
             if new > 0:
-                await self._order_store.async_save()
                 # Schedule enrichment in background (don't block update cycle / setup)
                 self._hass.async_create_task(self._auto_enrich_new_orders(new))
 
@@ -414,21 +418,25 @@ class RohlikAccount:
 
     async def _auto_enrich_new_orders(self, new_count: int) -> None:
         """Auto-enrich recently added orders in the background."""
+        enriched = False
         try:
-            unenriched = self._order_store.unenriched_order_ids
-            recent_unenriched = unenriched[-new_count:] if len(unenriched) >= new_count else unenriched
-            if recent_unenriched:
-                items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
-                for order_id, items in items_map.items():
-                    self._order_store.add_items_to_order(order_id, items)
-                uncategorized = self._order_store.uncategorized_product_ids()
-                if uncategorized:
-                    cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
-                    self._order_store.update_product_categories(cat_map)
-                if items_map:
-                    await self._order_store.async_save()
-                    _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
-                    await self.publish_updates()
+            async with self._store_lock:
+                unenriched = self._order_store.unenriched_order_ids
+                recent_unenriched = unenriched[-new_count:] if len(unenriched) >= new_count else unenriched
+                if recent_unenriched:
+                    items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
+                    for order_id, items in items_map.items():
+                        self._order_store.add_items_to_order(order_id, items)
+                    uncategorized = self._order_store.uncategorized_product_ids()
+                    if uncategorized:
+                        cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
+                        self._order_store.update_product_categories(cat_map)
+                    if items_map:
+                        await self._order_store.async_save()
+                        _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
+                        enriched = True
+            if enriched:
+                await self.publish_updates()
         except Exception as err:
             _LOGGER.warning(f"Auto-enrichment of new orders failed: {err}")
 
@@ -437,25 +445,26 @@ class RohlikAccount:
 
         Returns dict with stats.
         """
-        # Step 1: Fetch order list (existing behavior)
-        all_orders = await self._rohlik_api.fetch_all_delivered_orders()
-        new_orders = 0
-        if self._order_store and all_orders:
-            new_orders = self._order_store.process_orders(all_orders)
-            if new_orders > 0:
-                await self._order_store.async_save()
+        async with self._store_lock:
+            # Step 1: Fetch order list (existing behavior)
+            all_orders = await self._rohlik_api.fetch_all_delivered_orders()
+            new_orders = 0
+            if self._order_store and all_orders:
+                new_orders = self._order_store.process_orders(all_orders)
+                if new_orders > 0:
+                    await self._order_store.async_save()
 
-        # Step 2: Enrich with items and categories
-        if self._order_store:
-            enrich_stats = await self.enrich_order_details(hass=hass)
-            enrich_stats["new_orders"] = new_orders
-            # Mark backfill as done so we don't re-download on next restart
-            if not self._order_store.backfill_complete:
-                self._order_store.mark_backfill_complete()
-                await self._order_store.async_save()
-            return enrich_stats
+            # Step 2: Enrich with items and categories
+            if self._order_store:
+                enrich_stats = await self._enrich_order_details(hass=hass)
+                enrich_stats["new_orders"] = new_orders
+                # Mark backfill as done so we don't re-download on next restart
+                if not self._order_store.backfill_complete:
+                    self._order_store.mark_backfill_complete()
+                    await self._order_store.async_save()
+                return enrich_stats
 
-        return {"total_orders": 0, "new_orders": 0}
+            return {"total_orders": 0, "new_orders": 0}
 
     def _t(self, key: str) -> str:
         """Get localized notification string based on HA language."""
@@ -473,6 +482,14 @@ class RohlikAccount:
 
     async def enrich_order_details(self, hass=None) -> dict:
         """Fetch item details and categories for all unenriched orders.
+
+        Public entry point — acquires the store lock.
+        """
+        async with self._store_lock:
+            return await self._enrich_order_details(hass=hass)
+
+    async def _enrich_order_details(self, hass=None) -> dict:
+        """Internal enrichment logic — caller must hold _store_lock.
 
         Two-phase enrichment:
         1. Fetch items for orders missing them
