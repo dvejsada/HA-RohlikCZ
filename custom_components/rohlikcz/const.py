@@ -57,6 +57,7 @@ SERVICE_GET_CART_CONTENT = "get_cart_content"
 SERVICE_SEARCH_AND_ADD_PRODUCT = "search_and_add_to_cart"
 SERVICE_UPDATE_DATA = "update_data"
 SERVICE_FETCH_ORDER_HISTORY = "fetch_order_history"
+SERVICE_REFRESH_SLOTS = "refresh_slots"
 
 """ Analytics options """
 CONF_ANALYTICS = "analytics"

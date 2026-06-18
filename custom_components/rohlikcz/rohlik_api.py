@@ -81,6 +81,8 @@ class RohlikCZAPI:
         self._user_id = None
         self._address_id = None
         self.endpoints = {}
+        self._session = None
+        self._session_lock = asyncio.Lock()  # serializes access to the reused session
 
     def _run_in_executor(self, func, *args, **kwargs):
         """
@@ -230,6 +232,70 @@ class RohlikCZAPI:
             # Step 3: Close the session
             await self.logout(session)
             await self._run_in_executor(session.close)
+
+    async def _ensure_session(self):
+        """
+        Return a persistent, logged-in session, creating and authenticating it on first use.
+
+        Unlike the other methods in this client, the session is kept open and reused across
+        calls so that lightweight polling (see get_timeslots) does not require a fresh
+        login/logout round-trip every time.
+
+        Returns:
+            requests.Session: An authenticated session.
+        """
+        if self._session is None:
+            self._session = requests.Session()
+            await self.login(self._session)
+        return self._session
+
+    async def get_timeslots(self):
+        """
+        Fetch only the delivery timeslot data, reusing a persistent logged-in session.
+
+        This is a lightweight alternative to get_data() for checking express slot
+        availability. It performs a single GET against the timeslot endpoint and only
+        re-authenticates if the persistent session has expired (HTTP 401).
+
+        Returns:
+            dict | None: The parsed timeslot JSON, or None if no delivery address is
+                available or the request fails.
+        """
+        async with self._session_lock:
+            await self._ensure_session()
+
+            if not self._address_id:
+                return None
+
+            path = f"/services/frontend-service/timeslots-api/0?userId={self._user_id}&addressId={self._address_id}&reasonableDeliveryTime=true"
+            url = f"{BASE_URL}{path}"
+
+            # A reused session can fail transiently: the login may have expired
+            # (HTTP 401), or a keep-alive connection left idle between polls may
+            # have been closed by the server (connection reset). Retry once — on
+            # 401 with a fresh login, otherwise on a fresh connection.
+            for attempt in range(2):
+                try:
+                    session = await self._ensure_session()
+                    response = await self._run_in_executor(session.get, url)
+                    if response.status_code == 401:
+                        self._session = None  # expired login: re-auth on retry
+                        if attempt == 0:
+                            continue
+                    response.raise_for_status()
+                    return response.json()
+                except RequestException as err:
+                    if attempt == 0:
+                        continue  # transient (e.g. stale connection): retry once
+                    _LOGGER.error(f"Error fetching timeslots: {err}")
+                    return None
+
+    async def close_session(self) -> None:
+        """Close the persistent session if one is open (called on unload)."""
+        async with self._session_lock:
+            if self._session is not None:
+                await self._run_in_executor(self._session.close)
+                self._session = None
 
     async def get_delivered_orders_page(self, session, offset: int = 0, limit: int = 50) -> list:
         """Fetch a page of delivered orders using an existing authenticated session."""

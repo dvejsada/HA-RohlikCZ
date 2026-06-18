@@ -420,6 +420,15 @@ class RohlikAccount:
 
         await self.publish_updates()
 
+    async def refresh_slots(self) -> None:
+        """Refresh only the delivery timeslot data (cheap express-availability check).
+
+        Unlike async_update, this merges into self.data instead of replacing it, so the
+        other sensors keep their existing values.
+        """
+        self.data["next_delivery_slot"] = await self._rohlik_api.get_timeslots()
+        await self.publish_updates()
+
     async def _auto_enrich_new_orders(self, new_count: int) -> None:
         """Auto-enrich recently added orders in the background."""
         enriched = False
@@ -618,3 +627,7 @@ class RohlikAccount:
         result = await self._rohlik_api.delete_from_cart(order_field_id)
         await self.async_update()  # Refresh data after deletion
         return result
+
+    async def async_close(self) -> None:
+        """Release resources held by the account (e.g. the reusable API session)."""
+        await self._rohlik_api.close_session()

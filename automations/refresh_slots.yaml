@@ -1,0 +1,51 @@
+# Example: quickly watch for express availability using the lightweight
+# rohlikcz.refresh_slots action.
+#
+# The integration refreshes ALL data on a 10-minute cycle. rohlikcz.refresh_slots
+# fetches ONLY the delivery timeslots (a single request, reusing a logged-in
+# session), so it is cheap enough to poll every ~15s while you are actually
+# waiting for an express slot to open.
+#
+# This automation is "armed" by an input_boolean so it only polls on demand
+# instead of hammering the server 24/7. Create the helper first under
+# Settings > Devices & Services > Helpers > Toggle, e.g.
+#   input_boolean.rohlik_express_alert_active
+# To start watching, simply turn that helper on.
+alias: Rohlik Express - Watch and Notify
+description: >-
+  While armed, repeatedly refresh only the Rohlik delivery slots until express
+  becomes available, then notify and disarm.
+triggers:
+  - entity_id: input_boolean.rohlik_express_alert_active # Your "arm" helper
+    to: "on"
+    trigger: state
+actions:
+  - repeat:
+      while:
+        # Keep polling while armed AND express is not yet available
+        - condition: state
+          entity_id: input_boolean.rohlik_express_alert_active
+          state: "on"
+        - condition: state
+          entity_id: binary_sensor.xxxxxxxx_express_available # Replace with your express binary sensor
+          state: "off"
+      sequence:
+        - action: rohlikcz.refresh_slots # Lightweight timeslot-only refresh
+          data:
+            config_entry_id: XXXXXXXXXXXXXXXX # Replace with your Rohlik.cz config entry ID
+        - delay:
+            seconds: 15 # Poll interval; lower for snappier, higher for gentler
+  # Express opened (or you disarmed). Notify only if it actually became available.
+  - if:
+      - condition: state
+        entity_id: binary_sensor.xxxxxxxx_express_available # Replace with your express binary sensor
+        state: "on"
+    then:
+      - action: notify.notify # Replace with your notify service or script
+        data:
+          title: Rohlik Express is available!
+          message: You can now place your express order.
+  - action: input_boolean.turn_off # Disarm so polling stops
+    target:
+      entity_id: input_boolean.rohlik_express_alert_active
+mode: single

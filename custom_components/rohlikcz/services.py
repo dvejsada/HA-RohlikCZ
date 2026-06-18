@@ -10,7 +10,8 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN, ATTR_CONFIG_ENTRY_ID, ATTR_PRODUCT_ID, ATTR_QUANTITY, ATTR_PRODUCT_NAME, \
     ATTR_SHOPPING_LIST_ID, ATTR_LIMIT, ATTR_FAVOURITE_ONLY, SERVICE_ADD_TO_CART, SERVICE_SEARCH_PRODUCT, SERVICE_GET_SHOPPING_LIST, \
-    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA, SERVICE_FETCH_ORDER_HISTORY
+    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA, SERVICE_FETCH_ORDER_HISTORY, \
+    SERVICE_REFRESH_SLOTS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,6 +131,20 @@ def register_services(hass: HomeAssistant) -> None:
         except Exception as err:
             raise HomeAssistantError(f"Failed to update data: {err}")
 
+    async def async_refresh_slots(call: ServiceCall) -> None:
+        """Refresh only the delivery timeslot data (lightweight express availability check)."""
+        config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
+
+        if config_entry_id not in hass.data[DOMAIN]:
+            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
+
+        account = hass.data[DOMAIN][config_entry_id]
+        try:
+            await account.refresh_slots()
+
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to refresh slots: {err}")
+
 
     async def async_fetch_order_history(call: ServiceCall) -> None:
         """Fetch complete order history from Rohlik."""
@@ -225,6 +240,16 @@ def register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_UPDATE_DATA,
         async_update_data,
+        schema=vol.Schema({
+            vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string
+        }),
+        supports_response=SupportsResponse.NONE
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REFRESH_SLOTS,
+        async_refresh_slots,
         schema=vol.Schema({
             vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string
         }),
