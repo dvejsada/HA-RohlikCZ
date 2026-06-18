@@ -18,4 +18,4 @@ class AddressNotSetError(RohlikczError):
 
 
 class APIRequestFailedError(RohlikczError):
-    """ No delivery address set in user account. """
+    """ API request to rohlik.cz failed. """

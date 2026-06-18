@@ -463,9 +463,6 @@ class RohlikCZAPI:
                 "canCorrect": True
             }
 
-            # Login to account to return user-specific data
-            await self.login(session)
-
             # Perform API request
             search_response = await self._run_in_executor(
                 session.get,

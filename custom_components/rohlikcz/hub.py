@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, cast, List, Optional, Dict
+from typing import Any, Optional, Dict
 from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant

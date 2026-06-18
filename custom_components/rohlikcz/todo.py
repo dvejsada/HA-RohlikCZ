@@ -112,7 +112,7 @@ class RohlikCartTodo(TodoListEntity):
         result = await self._rohlik_hub.search_and_add(product_name, quantity)
 
         if not result or not result.get("success", False):
-            _LOGGER.error("Error with adding product to")
+            _LOGGER.error("Failed to add product to cart: %s", product_name)
             raise ServiceValidationError(f"Product not found: {product_name}")
 
 
@@ -122,7 +122,7 @@ class RohlikCartTodo(TodoListEntity):
             try:
                 # Call the new delete_from_cart method with the cart_item_id
                 await self._rohlik_hub.delete_from_cart(uid)
-                _LOGGER.error(f"Deleted item: {uid}")
+                _LOGGER.debug(f"Deleted item: {uid}")
             except Exception as err:
                 _LOGGER.error("Error deleting item %s: %s", uid, err)
 

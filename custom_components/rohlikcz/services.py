@@ -114,7 +114,7 @@ def register_services(hass: HomeAssistant) -> None:
             return result
         except Exception as err:
             _LOGGER.error(f"Failed to get cart content: {err}")
-            raise HomeAssistantError(f"Failed to get get cart content: {err}")
+            raise HomeAssistantError(f"Failed to get cart content: {err}")
 
     async def async_update_data(call: ServiceCall) -> None:
         """Updates integration data."""
