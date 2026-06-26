@@ -19,4 +19,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements_test.txt
       - name: Run tests
-        run: pytest tests/ -q
+        # Use `python -m pytest` so the repo root is on sys.path and the
+        # `custom_components` package is importable.
+        run: python -m pytest tests/ -q
