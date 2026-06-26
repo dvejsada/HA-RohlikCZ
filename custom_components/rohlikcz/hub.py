@@ -181,6 +181,27 @@ class OrderStore:
         """Count of enriched orders (with item details) for a given year."""
         return sum(1 for o in self._data["orders"].values() if o["date"].startswith(year) and "items" in o)
 
+    def yearly_breakdown(self) -> dict[str, dict]:
+        """Per-year totals and counts for every tracked year.
+
+        Returns a mapping like {"2025": {"total": 1234.5, "order_count": 12}, ...}
+        sorted by year descending (most recent first).
+        """
+        breakdown: dict[str, dict] = {}
+        for order in self._data["orders"].values():
+            date = order.get("date") or ""
+            year = date[:4]
+            if not year:
+                continue
+            entry = breakdown.setdefault(year, {"total": 0.0, "order_count": 0})
+            entry["total"] += order["amount"]
+            entry["order_count"] += 1
+
+        for entry in breakdown.values():
+            entry["total"] = round(entry["total"], 2)
+
+        return {year: breakdown[year] for year in sorted(breakdown, reverse=True)}
+
     def alltime_total(self) -> float:
         """Sum of all order amounts."""
         return sum(o["amount"] for o in self._data["orders"].values())

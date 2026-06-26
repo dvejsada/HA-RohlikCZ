@@ -178,18 +178,48 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
 
     @property
     def native_value(self) -> datetime | None:
-        """Returns time of delivery."""
-        delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
-        if len(delivery_info) > 0:
-            delivery_time = extract_delivery_datetime(delivery_info[0].get("content", ""))
-            self._last_value = delivery_time
-            return delivery_time
-        else:
-            # If announcements stopped but order still exists, preserve last value
-            if self._rohlik_account.is_ordered and self._last_value is not None:
-                return self._last_value
-            else:
-                return None
+        """Returns time of delivery for the soonest upcoming order.
+
+        The precise delivery time comes from the delivery announcement, but with
+        multiple concurrent orders the announcement may relate to a later order
+        rather than the soonest one. In that case (or once the announcement has
+        been cleared) we fall back to the delivery slot of the earliest upcoming
+        order - the same source the delivery slot sensors use - which always
+        reflects the soonest order.
+        """
+        announcements: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
+        upcoming_orders: list = self._rohlik_account.data.get("next_order", []) or []
+        earliest_order = get_earliest_order(upcoming_orders)
+
+        if len(announcements) > 0:
+            announcement = announcements[0]
+            # Only trust the announcement when there is a single upcoming order
+            # (no ambiguity) or when it explicitly matches the soonest order.
+            announcement_matches_soonest = (
+                len(upcoming_orders) <= 1
+                or earliest_order is None
+                or str(announcement.get("id", "")) == str(earliest_order.get("id", ""))
+            )
+            if announcement_matches_soonest:
+                delivery_time = extract_delivery_datetime(announcement.get("content", ""))
+                if delivery_time is not None:
+                    self._last_value = delivery_time
+                    return delivery_time
+
+        # Fall back to the delivery slot of the soonest order.
+        if earliest_order is not None:
+            slot_since = parse_delivery_datetime_string(
+                earliest_order.get("deliverySlot", {}).get("since")
+            )
+            if slot_since is not None:
+                self._last_value = slot_since
+                return slot_since
+
+        # No live data available - preserve the last known value while an order
+        # still exists so it isn't cleared shortly before delivery.
+        if self._rohlik_account.is_ordered and self._last_value is not None:
+            return self._last_value
+        return None
 
     @property
     def icon(self) -> str:
@@ -721,6 +751,7 @@ class AllTimeSpent(BaseEntity, SensorEntity):
             "average_order_value": round(total / count, 2) if count > 0 else 0.0,
             "first_order_date": store.first_order_date(),
             "tracking_since": store.tracking_since,
+            "by_year": store.yearly_breakdown(),
         }
 
     @property
