@@ -72,7 +72,7 @@ def test_order_store():
         breakdown = {}
         for o in data["orders"].values():
             year = (o.get("date") or "")[:4]
-            if not year:
+            if len(year) != 4:
                 continue
             entry = breakdown.setdefault(year, {"total": 0.0, "order_count": 0})
             entry["total"] += o["amount"]

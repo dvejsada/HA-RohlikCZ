@@ -132,10 +132,12 @@ class RohlikCZAPI:
                 # failure, so extract the error message defensively to avoid an
                 # IndexError masking the real status code.
                 messages = login_response.get("messages") or []
+                fallback_detail = f"status code {login_response['status']}, no message provided"
                 if messages and isinstance(messages[0], dict):
-                    error_detail = messages[0].get("content", "")
+                    # Fall back when content is missing or an empty string.
+                    error_detail = messages[0].get("content") or fallback_detail
                 else:
-                    error_detail = f"status code {login_response['status']}, no message provided"
+                    error_detail = fallback_detail
 
                 if login_response["status"] == 401:
                     raise InvalidCredentialsError(error_detail)

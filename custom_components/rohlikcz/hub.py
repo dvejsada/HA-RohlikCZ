@@ -191,7 +191,7 @@ class OrderStore:
         for order in self._data["orders"].values():
             date = order.get("date") or ""
             year = date[:4]
-            if not year:
+            if len(year) != 4:
                 continue
             entry = breakdown.setdefault(year, {"total": 0.0, "order_count": 0})
             entry["total"] += order["amount"]
