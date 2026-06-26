@@ -165,5 +165,3 @@ class IsReservedSensor(BaseEntity, BinarySensorEntity):
     @property
     def icon(self) -> str:
         return ICON_TIMESLOT
-
-

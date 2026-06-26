@@ -151,7 +151,7 @@ async def test_setup_connection_error_retries(hass: HomeAssistant) -> None:
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant) -> None:
+async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp_path) -> None:
     """Auto-enrichment fetches items + categories and persists them.
 
     Also guards the refactor that releases the store lock during network I/O.
@@ -167,7 +167,7 @@ async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant) -> 
     account = RohlikAccount(
         hass, "user", "pass", analytics=["categories_l1"], entry=entry
     )
-    store = await OrderStore.async_create(hass.config.path(".storage"), "123456", hass)
+    store = await OrderStore.async_create(str(tmp_path), "123456", hass)
     store.process_orders(
         [
             {
@@ -198,8 +198,62 @@ async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant) -> 
 
     await account._auto_enrich_new_orders(1)
 
-    assert store.enriched_count == 1
+    assert "items" in store.orders["9001"]
     assert store.get_product_category(111, 1) == "Dairy"
+
+
+async def test_enrich_order_details_applies_results(hass: HomeAssistant, tmp_path) -> None:
+    """The enrich_orders service path enriches items + categories.
+
+    Guards the lock-split refactor in _enrich_order_details / enrich_order_details.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="123456",
+        data=ENTRY_DATA,
+        options={CONF_ANALYTICS: ["categories_l1"]},
+    )
+    entry.add_to_hass(hass)
+
+    account = RohlikAccount(
+        hass, "user", "pass", analytics=["categories_l1"], entry=entry
+    )
+    store = await OrderStore.async_create(str(tmp_path), "123456", hass)
+    store.process_orders(
+        [
+            {
+                "id": 9002,
+                "orderTime": "2026-05-02T10:00:00.000+02:00",
+                "priceComposition": {"total": {"amount": 300.0}},
+            }
+        ]
+    )
+    account._order_store = store
+    account._rohlik_api.enrich_orders_with_items = AsyncMock(
+        return_value={
+            "9002": [
+                {
+                    "id": 222,
+                    "name": "Bread",
+                    "quantity": 2,
+                    "price": 40.0,
+                    "unit_price": 20.0,
+                    "textual_amount": "500 g",
+                }
+            ]
+        }
+    )
+    account._rohlik_api.fetch_product_categories_batch = AsyncMock(
+        return_value={222: [{"level": 1, "name": "Bakery"}]}
+    )
+
+    # hass=None keeps it off the persistent_notification service.
+    result = await account.enrich_order_details()
+
+    assert "items" in store.orders["9002"]
+    assert store.get_product_category(222, 1) == "Bakery"
+    assert result["orders_enriched_this_run"] == 1
+    assert result["products_categorized_this_run"] == 1
 
 
 async def test_coordinator_refresh_updates_data(hass: HomeAssistant) -> None:
