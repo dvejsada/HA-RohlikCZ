@@ -3,15 +3,21 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Callable
-from datetime import datetime
-from typing import Any, cast, List, Optional, Dict
+from datetime import datetime, timedelta
+from typing import Any, Optional, Dict
 from zoneinfo import ZoneInfo
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .const import DOMAIN
+from .errors import InvalidCredentialsError, APIRequestFailedError, RohlikczError
 from .rohlik_api import RohlikCZAPI
+
+#: How often the integration refreshes data from the Rohlik API.
+UPDATE_INTERVAL = timedelta(seconds=600)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -350,18 +356,22 @@ class OrderStore:
         return result
 
 
-class RohlikAccount:
-    """Setting RohlikCZ account as device."""
+class RohlikAccount(DataUpdateCoordinator[dict]):
+    """RohlikCZ account modelled as a Home Assistant data update coordinator."""
 
-    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True) -> None:
+    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True, entry: ConfigEntry | None = None) -> None:
         """Initialize account info."""
-        super().__init__()
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=UPDATE_INTERVAL,
+            config_entry=entry,
+        )
         self._hass = hass
         self._username: str = username
         self._password: str = password
         self._rohlik_api = RohlikCZAPI(self._username, self._password)
-        self.data: dict = {}
-        self._callbacks: set[Callable[[], None]] = set()
         self._order_store: OrderStore | None = None
         self._store_lock = asyncio.Lock()
         self._analytics: list[str] = analytics or []
@@ -401,8 +411,12 @@ class RohlikAccount:
         return {"identifiers": {(DOMAIN, self.data["login"]["data"]["user"]["id"])}, "name": self.data["login"]["data"]["user"]["name"], "manufacturer": "Rohlík.cz"}
 
     @property
-    def name(self) -> str:
-        """Provides name for account."""
+    def account_name(self) -> str:
+        """Provides display name for the account holder.
+
+        Note: ``name`` is reserved by DataUpdateCoordinator, so the account's
+        display name is exposed separately.
+        """
         return self.data["login"]["data"]["user"]["name"]
 
     @property
@@ -418,28 +432,37 @@ class RohlikAccount:
     def order_store(self) -> OrderStore | None:
         return self._order_store
 
-    async def async_update(self) -> None:
-        """ Updates the data from API."""
-
-        self.data = await self._rohlik_api.get_data()
+    async def _async_update_data(self) -> dict:
+        """Fetch data from the Rohlik API (called by the coordinator)."""
+        try:
+            data = await self._rohlik_api.get_data()
+        except InvalidCredentialsError as err:
+            # Credentials are no longer valid - trigger the reauth flow.
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except (APIRequestFailedError, RohlikczError) as err:
+            raise UpdateFailed(str(err)) from err
 
         # Initialize order store on first update (only if analytics enabled)
-        if self._analytics and not self._order_store and self.data.get("login"):
-            user_id = str(self.data["login"]["data"]["user"]["id"])
+        if self._analytics and not self._order_store and data.get("login"):
+            user_id = str(data["login"]["data"]["user"]["id"])
             storage_dir = self._hass.config.path(".storage")
             self._order_store = await OrderStore.async_create(storage_dir, user_id, self._hass)
 
         # Process delivered orders into persistent store and auto-enrich new ones
-        if self._analytics and self._order_store and self.data.get("delivered_orders"):
+        if self._analytics and self._order_store and data.get("delivered_orders"):
             async with self._store_lock:
-                new = self._order_store.process_orders(self.data["delivered_orders"])
+                new = self._order_store.process_orders(data["delivered_orders"])
                 if new > 0:
                     await self._order_store.async_save()
             if new > 0:
                 # Schedule enrichment in background (don't block update cycle / setup)
                 self._hass.async_create_task(self._auto_enrich_new_orders(new))
 
-        await self.publish_updates()
+        return data
+
+    async def async_update(self) -> None:
+        """Force an immediate data refresh (used by services and after cart changes)."""
+        await self.async_refresh()
 
     async def _auto_enrich_new_orders(self, new_count: int) -> None:
         """Auto-enrich recently added orders in the background."""
@@ -461,7 +484,7 @@ class RohlikAccount:
                         _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
                         enriched = True
             if enriched:
-                await self.publish_updates()
+                self.async_update_listeners()
         except Exception as err:
             _LOGGER.warning(f"Auto-enrichment of new orders failed: {err}")
 
@@ -576,7 +599,7 @@ class RohlikAccount:
             ),
             self._t("title_complete"))
 
-        await self.publish_updates()
+        self.async_update_listeners()
         return {
             "total_orders": self._order_store.alltime_count(),
             "enriched_orders": self._order_store.enriched_count,
@@ -585,19 +608,6 @@ class RohlikAccount:
             "orders_enriched_this_run": stats["orders_enriched"],
             "products_categorized_this_run": stats["products_categorized"],
         }
-
-    def register_callback(self, callback: Callable[[], None]) -> None:
-        """Register callback, called when there are new data."""
-        self._callbacks.add(callback)
-
-    def remove_callback(self, callback: Callable[[], None]) -> None:
-        """Remove previously registered callback."""
-        self._callbacks.discard(callback)
-
-    async def publish_updates(self) -> None:
-        """Schedule call to all registered callbacks."""
-        for callback in self._callbacks:
-            callback()
 
     # New service methods
     async def add_to_cart(self, product_id: int, quantity: int) -> Dict:

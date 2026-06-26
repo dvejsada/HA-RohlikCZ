@@ -26,7 +26,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up calendar entities for passed config_entry in HA."""
-    rohlik_hub: RohlikAccount = hass.data[DOMAIN][config_entry.entry_id]  # type: ignore[Any]
+    rohlik_hub: RohlikAccount = config_entry.runtime_data
     async_add_entities([RohlikDeliveryCalendar(rohlik_hub)])
 
 
@@ -289,8 +289,6 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
         # Initial update
         _LOGGER.debug("Calendar entity added to hass, updating events")
         self._update_events()
-        # Register callback for updates
-        self._rohlik_account.register_callback(self._on_data_update)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -298,15 +296,10 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
         return {
             "stored_delivery_slots": self._stored_delivery_slots,
         }
-    
-    def _on_data_update(self) -> None:
-        """Handle data updates from RohlikAccount."""
-        _LOGGER.debug("Calendar received data update callback")
+
+    def _handle_coordinator_update(self) -> None:
+        """Rebuild events when the coordinator delivers fresh data."""
+        _LOGGER.debug("Calendar received coordinator update")
         self._update_events()
         self.async_write_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Run when entity is being removed from hass."""
-        self._rohlik_account.remove_callback(self._on_data_update)
-        await super().async_will_remove_from_hass()
 

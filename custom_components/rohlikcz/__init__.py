@@ -18,6 +18,9 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = ["sensor", "binary_sensor", "todo", "calendar"]
 
+#: Typed config entry whose runtime_data is the coordinator.
+type RohlikConfigEntry = ConfigEntry[RohlikAccount]
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entries to new format."""
@@ -32,18 +35,30 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bool:
     """Set up Rohlik integration from a config entry flow."""
     analytics = entry.options.get(CONF_ANALYTICS, DEFAULT_ANALYTICS)
-
     top_n = int(entry.options.get(CONF_TOP_N, DEFAULT_TOP_N))
     hide_discontinued = entry.options.get(CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED)
-    rohlik_hub = RohlikAccount(hass, entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD], analytics=analytics, top_n=top_n, hide_discontinued=hide_discontinued)
-    await rohlik_hub.async_update()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = rohlik_hub
+    rohlik_hub = RohlikAccount(
+        hass,
+        entry.data[CONF_EMAIL],
+        entry.data[CONF_PASSWORD],
+        analytics=analytics,
+        top_n=top_n,
+        hide_discontinued=hide_discontinued,
+        entry=entry,
+    )
 
-    # Register services
+    # Performs the first refresh; raises ConfigEntryNotReady on connection
+    # failure (retried automatically) or ConfigEntryAuthFailed on bad
+    # credentials (triggers the reauth flow).
+    await rohlik_hub.async_config_entry_first_refresh()
+
+    entry.runtime_data = rohlik_hub
+
+    # Register services (idempotent across entries)
     register_services(hass)
 
     _LOGGER.info("Setting up platforms: %s", PLATFORMS)
@@ -82,15 +97,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _async_reload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> None:
     """Reload the config entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

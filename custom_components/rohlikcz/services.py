@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 import logging
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN, ATTR_CONFIG_ENTRY_ID, ATTR_PRODUCT_ID, ATTR_QUANTITY, ATTR_PRODUCT_NAME, \
@@ -13,6 +13,17 @@ from .const import DOMAIN, ATTR_CONFIG_ENTRY_ID, ATTR_PRODUCT_ID, ATTR_QUANTITY,
     SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA, SERVICE_FETCH_ORDER_HISTORY
 
 _LOGGER = logging.getLogger(__name__)
+
+def _get_account(hass: HomeAssistant, config_entry_id: str):
+    """Return the coordinator for a config entry id, or raise a validation error."""
+    entry = hass.config_entries.async_get_entry(config_entry_id)
+    if entry is None or entry.domain != DOMAIN:
+        raise ServiceValidationError(f"Rohlik config entry {config_entry_id} not found")
+    account = getattr(entry, "runtime_data", None)
+    if account is None:
+        raise ServiceValidationError(f"Rohlik config entry {config_entry_id} is not loaded")
+    return account
+
 
 def register_services(hass: HomeAssistant) -> None:
     """Register services for the Rohlik integration."""
@@ -23,13 +34,10 @@ def register_services(hass: HomeAssistant) -> None:
         product_id = call.data[ATTR_PRODUCT_ID]
         quantity = call.data[ATTR_QUANTITY]
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             result = await account.add_to_cart(product_id, quantity)
-            _LOGGER.info(f"Product added to cart for {account.name}: {result}")
+            _LOGGER.info(f"Product added to cart for {account.account_name}: {result}")
             return result
         except Exception as err:
             _LOGGER.error(f"Failed to add product to cart: {err}")
@@ -42,10 +50,7 @@ def register_services(hass: HomeAssistant) -> None:
         limit = call.data.get(ATTR_LIMIT, None)
         favourite = call.data.get(ATTR_FAVOURITE_ONLY, None)
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             # Create kwargs dictionary with only parameters that are not None
             kwargs = {}
@@ -67,10 +72,7 @@ def register_services(hass: HomeAssistant) -> None:
         quantity = call.data[ATTR_QUANTITY]
         favourite = call.data.get(ATTR_FAVOURITE_ONLY, None)
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             # Create kwargs dictionary with only parameters that are not None
             kwargs = {}
@@ -90,10 +92,7 @@ def register_services(hass: HomeAssistant) -> None:
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
         shopping_list_id = call.data[ATTR_SHOPPING_LIST_ID]
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             result = await account.get_shopping_list(shopping_list_id)
             return result
@@ -105,10 +104,7 @@ def register_services(hass: HomeAssistant) -> None:
         """Get shopping cart content."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             result = await account.get_cart_content()
             return result
@@ -120,10 +116,7 @@ def register_services(hass: HomeAssistant) -> None:
         """Updates integration data."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             await account.async_update()
 
@@ -135,10 +128,7 @@ def register_services(hass: HomeAssistant) -> None:
         """Fetch complete order history from Rohlik."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             result = await account.fetch_full_order_history(hass=hass)
             _LOGGER.info(f"Fetch order history result: {result}")
@@ -150,10 +140,7 @@ def register_services(hass: HomeAssistant) -> None:
         """Enrich stored orders with item details and product categories."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
 
-        if config_entry_id not in hass.data[DOMAIN]:
-            raise HomeAssistantError(f"Config entry {config_entry_id} not found")
-
-        account = hass.data[DOMAIN][config_entry_id]
+        account = _get_account(hass, config_entry_id)
         try:
             result = await account.enrich_order_details(hass=hass)
             _LOGGER.info(f"Enrich orders result: {result}")

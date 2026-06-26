@@ -25,6 +25,13 @@
           "top_n": "How many top items to show in sensor attributes (by spending). Default: 10.",
           "hide_discontinued": "Exclude discontinued products from top categories and items."
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Rohlik.cz",
+        "description": "The stored credentials for {email} are no longer valid. Enter the password again.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -33,7 +40,9 @@
       "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "Account is already configured"
+      "already_configured": "Account is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "wrong_account": "The credentials are for a different Rohlik account"
     }
   },
   "options": {

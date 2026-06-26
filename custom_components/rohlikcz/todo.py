@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ICON_CART
 from .hub import RohlikAccount
@@ -27,12 +28,12 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the Rohlik shopping cart todo platform config entry."""
-    rohlik_hub = hass.data[DOMAIN][config_entry.entry_id]
+    rohlik_hub: RohlikAccount = config_entry.runtime_data
 
     async_add_entities([RohlikCartTodo(rohlik_hub)])
 
 
-class RohlikCartTodo(TodoListEntity):
+class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
     """A Rohlik Shopping Cart TodoListEntity."""
 
     _attr_has_entity_name = True
@@ -45,15 +46,12 @@ class RohlikCartTodo(TodoListEntity):
         rohlik_hub: RohlikAccount
     ) -> None:
         """Initialize RohlikCartTodo."""
-        super().__init__()
+        super().__init__(rohlik_hub)
         self._rohlik_hub = rohlik_hub
         self._attr_unique_id = f"{rohlik_hub.unique_id}-cart"
         self._attr_name = "Rohlik Shopping Cart"
         self._attr_device_info = rohlik_hub.device_info
         self._cart_content = None
-
-        # Register callback for updates
-        rohlik_hub.register_callback(self.async_write_ha_state)
 
     @property
     def todo_items(self) -> list[TodoItem] | None:
