@@ -1254,6 +1254,6 @@ class UpdateSensor(BaseEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     @property
-    def native_value(self) -> datetime:
-        """Time of the last coordinator refresh (written on each update)."""
-        return datetime.now(tz=ZoneInfo("Europe/Prague"))
+    def native_value(self) -> datetime | None:
+        """Time of the last data fetch from the API."""
+        return self._rohlik_account.last_refresh

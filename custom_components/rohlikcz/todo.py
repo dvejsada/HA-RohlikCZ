@@ -120,7 +120,7 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
             try:
                 # Call the new delete_from_cart method with the cart_item_id
                 await self._rohlik_hub.delete_from_cart(uid)
-                _LOGGER.error(f"Deleted item: {uid}")
+                _LOGGER.debug("Deleted item: %s", uid)
             except Exception as err:
                 _LOGGER.error("Error deleting item %s: %s", uid, err)
 

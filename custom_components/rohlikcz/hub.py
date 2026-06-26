@@ -368,11 +368,11 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             update_interval=UPDATE_INTERVAL,
             config_entry=entry,
         )
-        self._hass = hass
         self._username: str = username
         self._password: str = password
         self._rohlik_api = RohlikCZAPI(self._username, self._password)
         self._order_store: OrderStore | None = None
+        self._last_refresh: datetime | None = None
         self._store_lock = asyncio.Lock()
         self._analytics: list[str] = analytics or []
         self._top_n: int = top_n
@@ -399,11 +399,8 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         return self._hide_discontinued
 
     @property
-    def has_address(self):
-        if self.data["next_delivery_slot"]:
-            return True
-        else:
-            return False
+    def has_address(self) -> bool:
+        return bool((self.data or {}).get("next_delivery_slot"))
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -432,6 +429,11 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     def order_store(self) -> OrderStore | None:
         return self._order_store
 
+    @property
+    def last_refresh(self) -> datetime | None:
+        """Timestamp of the last data fetch from the API."""
+        return self._last_refresh
+
     async def _async_update_data(self) -> dict:
         """Fetch data from the Rohlik API (called by the coordinator)."""
         try:
@@ -442,11 +444,13 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         except (APIRequestFailedError, RohlikczError) as err:
             raise UpdateFailed(str(err)) from err
 
+        self._last_refresh = datetime.now(ZoneInfo("Europe/Prague"))
+
         # Initialize order store on first update (only if analytics enabled)
         if self._analytics and not self._order_store and data.get("login"):
             user_id = str(data["login"]["data"]["user"]["id"])
-            storage_dir = self._hass.config.path(".storage")
-            self._order_store = await OrderStore.async_create(storage_dir, user_id, self._hass)
+            storage_dir = self.hass.config.path(".storage")
+            self._order_store = await OrderStore.async_create(storage_dir, user_id, self.hass)
 
         # Process delivered orders into persistent store and auto-enrich new ones
         if self._analytics and self._order_store and data.get("delivered_orders"):
@@ -456,7 +460,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                     await self._order_store.async_save()
             if new > 0:
                 # Schedule enrichment in background (don't block update cycle / setup)
-                self._hass.async_create_task(self._auto_enrich_new_orders(new))
+                self.hass.async_create_task(self._auto_enrich_new_orders(new))
 
         return data
 
@@ -516,7 +520,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
 
     def _t(self, key: str) -> str:
         """Get localized notification string based on HA language."""
-        lang = self._hass.config.language or "en"
+        lang = self.hass.config.language or "en"
         return _NOTIFICATIONS.get(lang, _NOTIFICATIONS["en"]).get(key, _NOTIFICATIONS["en"][key])
 
     async def _notify(self, hass, message: str, title: str, notification_id: str = "rohlik_enrichment") -> None:

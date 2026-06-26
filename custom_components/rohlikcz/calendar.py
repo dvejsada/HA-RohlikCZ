@@ -286,9 +286,11 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                 self._stored_delivery_slots = stored_slots
                 _LOGGER.debug("Restored %d stored delivery slots from previous session", len(stored_slots))
         
-        # Initial update
+        # Initial update - populate events and write state immediately so the
+        # calendar is correct on add rather than after the next refresh.
         _LOGGER.debug("Calendar entity added to hass, updating events")
         self._update_events()
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

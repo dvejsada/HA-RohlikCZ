@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     DOMAIN, CONF_ANALYTICS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
+    SERVICE_ADD_TO_CART,
 )
 from .hub import RohlikAccount
 from .services import register_services
@@ -58,8 +59,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bo
 
     entry.runtime_data = rohlik_hub
 
-    # Register services (idempotent across entries)
-    register_services(hass)
+    # Register services once (shared across all config entries)
+    if not hass.services.has_service(DOMAIN, SERVICE_ADD_TO_CART):
+        register_services(hass)
 
     _LOGGER.info("Setting up platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -1,12 +1,14 @@
 """Tests for setup, coordinator behaviour, and unloading."""
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rohlikcz.const import DOMAIN
@@ -59,6 +61,64 @@ async def test_setup_creates_entities_and_unloads(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_updated_sensor_reflects_last_refresh(hass: HomeAssistant) -> None:
+    """The 'updated' sensor shows the coordinator's last fetch time, not now()."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=sample_api_data()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    account = entry.runtime_data
+    ent_reg = er.async_get(hass)
+    updated_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_updated")
+    assert updated_id is not None
+
+    state = hass.states.get(updated_id)
+    assert account.last_refresh is not None
+    # Timestamp sensors report second precision; compare the same instant.
+    assert dt_util.parse_datetime(state.state) == account.last_refresh.replace(
+        microsecond=0
+    )
+
+
+async def test_calendar_events_available_immediately(hass: HomeAssistant) -> None:
+    """Calendar events are populated on setup, before any later refresh."""
+    data = sample_api_data()
+    start = (dt_util.now() + timedelta(days=1)).replace(microsecond=0)
+    end = start + timedelta(hours=2)
+    data["next_order"] = [
+        {
+            "id": 7001,
+            "deliverySlot": {"since": start.isoformat(), "till": end.isoformat()},
+        }
+    ]
+
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with _patch_get_data(return_value=data):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    cal_id = ent_reg.async_get_entity_id("calendar", DOMAIN, "123456_delivery_calendar")
+    assert cal_id is not None
+
+    response = await hass.services.async_call(
+        "calendar",
+        "get_events",
+        {
+            "entity_id": cal_id,
+            "start_date_time": (start - timedelta(hours=1)).isoformat(),
+            "end_date_time": (end + timedelta(hours=1)).isoformat(),
+        },
+        blocking=True,
+        return_response=True,
+    )
+    assert len(response[cal_id]["events"]) == 1
 
 
 async def test_setup_auth_failure_triggers_reauth(hass: HomeAssistant) -> None:

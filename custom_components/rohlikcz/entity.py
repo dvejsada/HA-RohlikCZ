@@ -21,7 +21,8 @@ class BaseEntity(CoordinatorEntity[RohlikAccount]):
 
         if hasattr(self, "entity_description") and not self.translation_key:
             self._attr_translation_key = self.entity_description.key
-        assert self.translation_key is not None, "translation_key is not set"
+        if self.translation_key is None:
+            raise ValueError(f"translation_key is not set for {type(self).__name__}")
 
         self._rohlik_account = rohlik_account
         self._attr_device_info = rohlik_account.device_info
