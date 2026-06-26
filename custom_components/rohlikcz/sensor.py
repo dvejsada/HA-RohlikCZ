@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import logging
 import re
-import datetime
 
 from collections.abc import Mapping
-from datetime import timedelta, datetime, time
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass

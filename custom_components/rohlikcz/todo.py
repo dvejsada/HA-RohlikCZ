@@ -51,18 +51,17 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
         self._attr_unique_id = f"{rohlik_hub.unique_id}-cart"
         self._attr_name = "Rohlik Shopping Cart"
         self._attr_device_info = rohlik_hub.device_info
-        self._cart_content = None
 
     @property
     def todo_items(self) -> list[TodoItem] | None:
         """Handle updated data from the hub."""
-        self._cart_content = self._rohlik_hub.data["cart"]
+        cart_content = self._rohlik_hub.data["cart"]
 
-        if not self._cart_content:
+        if not cart_content:
             return None
 
         items = []
-        for product in self._cart_content.get("products", []):
+        for product in cart_content.get("products", []):
             # Format the summary to include relevant information
             summary = f"{product['name']} ({product['quantity']}) - {product['price']} Kč"
 
@@ -110,7 +109,7 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
         result = await self._rohlik_hub.search_and_add(product_name, quantity)
 
         if not result or not result.get("success", False):
-            _LOGGER.error("Error with adding product to")
+            _LOGGER.error("Failed to add product '%s' to cart", product_name)
             raise ServiceValidationError(f"Product not found: {product_name}")
 
 

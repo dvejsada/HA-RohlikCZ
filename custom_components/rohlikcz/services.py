@@ -10,7 +10,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN, ATTR_CONFIG_ENTRY_ID, ATTR_PRODUCT_ID, ATTR_QUANTITY, ATTR_PRODUCT_NAME, \
     ATTR_SHOPPING_LIST_ID, ATTR_LIMIT, ATTR_FAVOURITE_ONLY, SERVICE_ADD_TO_CART, SERVICE_SEARCH_PRODUCT, SERVICE_GET_SHOPPING_LIST, \
-    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA, SERVICE_FETCH_ORDER_HISTORY
+    SERVICE_GET_CART_CONTENT, SERVICE_SEARCH_AND_ADD_PRODUCT, SERVICE_UPDATE_DATA, SERVICE_FETCH_ORDER_HISTORY, SERVICE_ENRICH_ORDERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -230,7 +230,7 @@ def register_services(hass: HomeAssistant) -> None:
 
     hass.services.async_register(
         DOMAIN,
-        "enrich_orders",
+        SERVICE_ENRICH_ORDERS,
         async_enrich_orders,
         schema=vol.Schema({
             vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,

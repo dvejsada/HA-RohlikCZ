@@ -469,25 +469,45 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         await self.async_refresh()
 
     async def _auto_enrich_new_orders(self, new_count: int) -> None:
-        """Auto-enrich recently added orders in the background."""
-        enriched = False
+        """Auto-enrich recently added orders in the background.
+
+        The store lock is held only around in-memory reads/writes, never during
+        network I/O, so a slow enrichment doesn't block the regular refresh
+        cycle (which also takes the lock).
+        """
         try:
+            # Snapshot which orders still need enrichment.
             async with self._store_lock:
-                unenriched = self._order_store.unenriched_order_ids
+                unenriched = list(self._order_store.unenriched_order_ids)
                 recent_unenriched = unenriched[-new_count:] if len(unenriched) >= new_count else unenriched
-                if recent_unenriched:
-                    items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
-                    for order_id, items in items_map.items():
-                        self._order_store.add_items_to_order(order_id, items)
-                    uncategorized = self._order_store.uncategorized_product_ids()
-                    if uncategorized:
-                        cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
-                        self._order_store.update_product_categories(cat_map)
-                    if items_map:
-                        await self._order_store.async_save()
-                        _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
-                        enriched = True
+            if not recent_unenriched:
+                return
+
+            # Fetch item details (network I/O, no lock held).
+            items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
+
+            # Apply item results and find products needing categories.
+            async with self._store_lock:
+                for order_id, items in items_map.items():
+                    self._order_store.add_items_to_order(order_id, items)
+                uncategorized = self._order_store.uncategorized_product_ids()
+
+            # Fetch categories (network I/O, no lock held).
+            cat_map = {}
+            if uncategorized:
+                cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
+
+            # Persist all results.
+            enriched = False
+            async with self._store_lock:
+                if cat_map:
+                    self._order_store.update_product_categories(cat_map)
+                if items_map:
+                    await self._order_store.async_save()
+                    enriched = True
+
             if enriched:
+                _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
                 self.async_update_listeners()
         except Exception as err:
             _LOGGER.warning(f"Auto-enrichment of new orders failed: {err}")

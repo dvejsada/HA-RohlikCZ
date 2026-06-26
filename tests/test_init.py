@@ -11,9 +11,9 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.rohlikcz.const import DOMAIN
+from custom_components.rohlikcz.const import CONF_ANALYTICS, DOMAIN
 from custom_components.rohlikcz.errors import APIRequestFailedError, InvalidCredentialsError
-from custom_components.rohlikcz.hub import RohlikAccount
+from custom_components.rohlikcz.hub import OrderStore, RohlikAccount
 
 from fixtures_data import sample_api_data
 
@@ -149,6 +149,57 @@ async def test_setup_connection_error_retries(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant) -> None:
+    """Auto-enrichment fetches items + categories and persists them.
+
+    Also guards the refactor that releases the store lock during network I/O.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="123456",
+        data=ENTRY_DATA,
+        options={CONF_ANALYTICS: ["categories_l1"]},
+    )
+    entry.add_to_hass(hass)
+
+    account = RohlikAccount(
+        hass, "user", "pass", analytics=["categories_l1"], entry=entry
+    )
+    store = await OrderStore.async_create(hass.config.path(".storage"), "123456", hass)
+    store.process_orders(
+        [
+            {
+                "id": 9001,
+                "orderTime": "2026-05-01T10:00:00.000+02:00",
+                "priceComposition": {"total": {"amount": 750.0}},
+            }
+        ]
+    )
+    account._order_store = store
+    account._rohlik_api.enrich_orders_with_items = AsyncMock(
+        return_value={
+            "9001": [
+                {
+                    "id": 111,
+                    "name": "Milk",
+                    "quantity": 1,
+                    "price": 20.0,
+                    "unit_price": 20.0,
+                    "textual_amount": "1 l",
+                }
+            ]
+        }
+    )
+    account._rohlik_api.fetch_product_categories_batch = AsyncMock(
+        return_value={111: [{"level": 1, "name": "Dairy"}]}
+    )
+
+    await account._auto_enrich_new_orders(1)
+
+    assert store.enriched_count == 1
+    assert store.get_product_category(111, 1) == "Dairy"
 
 
 async def test_coordinator_refresh_updates_data(hass: HomeAssistant) -> None:
