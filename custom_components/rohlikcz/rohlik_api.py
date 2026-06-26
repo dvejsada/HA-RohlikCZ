@@ -128,10 +128,22 @@ class RohlikCZAPI:
             login_response: dict = login_response.json()
 
             if login_response["status"] != 200:
-                if login_response["status"] == 401:
-                    raise InvalidCredentialsError(login_response["messages"][0]["content"])
+                # The Rohlik API sometimes returns an empty "messages" array on
+                # failure, so extract the error message defensively to avoid an
+                # IndexError masking the real status code.
+                messages = login_response.get("messages") or []
+                fallback_detail = f"status code {login_response['status']}, no message provided"
+                if messages and isinstance(messages[0], dict):
+                    # Fall back when content is missing or an empty string.
+                    error_detail = messages[0].get("content") or fallback_detail
                 else:
-                    raise RohlikczError(f"Unknown error occurred during login: {login_response["messages"][0]["content"]}")
+                    error_detail = fallback_detail
+
+                if login_response["status"] == 401:
+                    raise InvalidCredentialsError(error_detail)
+                else:
+                    _LOGGER.error(f"Login failed. Status: {login_response['status']}, Full response: {mask_data(login_response)}")
+                    raise RohlikczError(f"Unknown error occurred during login: {error_detail}")
 
             if not self._user_id:
                 self._user_id = login_response.get("data", {}).get("user", {}).get("id", None)

@@ -59,39 +59,52 @@ def test_order_store():
 
         # Test: yearly totals
         yearly_2026 = sum(o["amount"] for o in data["orders"].values() if o["date"].startswith("2026"))
-    assert yearly_2026 == 1700.0, f"Expected 2026 total 1700.0, got {yearly_2026}"
+        assert yearly_2026 == 1700.0, f"Expected 2026 total 1700.0, got {yearly_2026}"
 
-    yearly_2025 = sum(o["amount"] for o in data["orders"].values() if o["date"].startswith("2025"))
-    assert yearly_2025 == 800.0, f"Expected 2025 total 800.0, got {yearly_2025}"
+        yearly_2025 = sum(o["amount"] for o in data["orders"].values() if o["date"].startswith("2025"))
+        assert yearly_2025 == 800.0, f"Expected 2025 total 800.0, got {yearly_2025}"
 
-    # Test: alltime total
-    alltime = sum(o["amount"] for o in data["orders"].values())
-    assert alltime == 2500.0, f"Expected alltime 2500.0, got {alltime}"
+        # Test: alltime total
+        alltime = sum(o["amount"] for o in data["orders"].values())
+        assert alltime == 2500.0, f"Expected alltime 2500.0, got {alltime}"
 
-    # Test: first order date
-    dates = [o["date"] for o in data["orders"].values() if o["date"]]
-    first = min(dates)
-    assert first == "2025-12-01", f"Expected first date 2025-12-01, got {first}"
+        # Test: per-year breakdown (mirrors OrderStore.yearly_breakdown)
+        breakdown = {}
+        for o in data["orders"].values():
+            year = (o.get("date") or "")[:4]
+            if len(year) != 4:
+                continue
+            entry = breakdown.setdefault(year, {"total": 0.0, "order_count": 0})
+            entry["total"] += o["amount"]
+            entry["order_count"] += 1
+        for entry in breakdown.values():
+            entry["total"] = round(entry["total"], 2)
+        breakdown = {year: breakdown[year] for year in sorted(breakdown, reverse=True)}
+        assert list(breakdown.keys()) == ["2026", "2025"], f"Expected years sorted desc, got {list(breakdown.keys())}"
+        assert breakdown["2026"] == {"total": 1700.0, "order_count": 2}, f"Bad 2026 breakdown: {breakdown['2026']}"
+        assert breakdown["2025"] == {"total": 800.0, "order_count": 1}, f"Bad 2025 breakdown: {breakdown['2025']}"
 
-    # Test: save and reload persistence
-    with open(store_path, "w") as f:
-        json.dump(data, f)
-    with open(store_path, "r") as f:
-        reloaded = json.load(f)
-    assert len(reloaded["orders"]) == 3, "Persistence failed"
+        # Test: first order date
+        dates = [o["date"] for o in data["orders"].values() if o["date"]]
+        first = min(dates)
+        assert first == "2025-12-01", f"Expected first date 2025-12-01, got {first}"
 
-    # Test: processing same orders again adds nothing (deduplication)
-    second_count = 0
-    for order in orders[:3]:
-        order_id = str(order.get("id", ""))
-        if not order_id or order_id in data["orders"]:
-            continue
-        second_count += 1
-    assert second_count == 0, f"Dedup failed: got {second_count} new on re-process"
+        # Test: save and reload persistence
+        with open(store_path, "w") as f:
+            json.dump(data, f)
+        with open(store_path, "r") as f:
+            reloaded = json.load(f)
+        assert len(reloaded["orders"]) == 3, "Persistence failed"
 
-    # Cleanup
-    os.remove(store_path)
-    os.rmdir(tmpdir)
+        # Test: processing same orders again adds nothing (deduplication)
+        second_count = 0
+        for order in orders[:3]:
+            order_id = str(order.get("id", ""))
+            if not order_id or order_id in data["orders"]:
+                continue
+            second_count += 1
+        assert second_count == 0, f"Dedup failed: got {second_count} new on re-process"
+
     print("All tests passed!")
 
 
