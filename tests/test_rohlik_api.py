@@ -188,6 +188,22 @@ async def test_search_product_filters_promoted() -> None:
     assert result["search_results"][0]["price"] == "99 CZK"
 
 
+async def test_fetch_all_delivered_orders_survives_logout_failure() -> None:
+    """A failing logout in the finally must not lose the fetched orders."""
+    with aioresponses() as m:
+        m.post(LOGIN_URL, payload=LOGIN_OK)
+        # Single short page -> pagination stops after one request.
+        m.get(
+            f"{BASE_URL}/api/v3/orders/delivered?offset=0&limit=50",
+            payload=[{"id": 1}, {"id": 2}],
+        )
+        m.post(LOGOUT_URL, exception=aiohttp.ClientConnectionError("logout down"))
+
+        orders = await _api().fetch_all_delivered_orders()
+
+    assert orders == [{"id": 1}, {"id": 2}]
+
+
 async def test_delete_from_cart_returns_json() -> None:
     with aioresponses() as m:
         m.post(LOGIN_URL, payload=LOGIN_OK)

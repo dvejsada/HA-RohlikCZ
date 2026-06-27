@@ -383,7 +383,10 @@ class RohlikCZAPI:
             _LOGGER.error(f"Error during full order history fetch: {err}")
             return all_orders
         finally:
-            await self.logout(session)
+            try:
+                await self.logout(session)
+            except Exception:
+                pass
             await session.close()
 
     async def add_to_cart(self, product_list: list[dict]) -> dict:
@@ -398,6 +401,8 @@ class RohlikCZAPI:
 
         session = self._new_session()
         try:
+            # A login network failure surfaces as APIRequestFailedError; per-product
+            # failures below are caught individually.
             await self.login(session)
 
             search_url = "/services/frontend-service/v2/cart"
@@ -420,9 +425,6 @@ class RohlikCZAPI:
 
             return {"added_products": added_products}
 
-        except _NETWORK_ERRORS as err:
-            _LOGGER.error(f"Request failed: {err}")
-            raise ValueError("Request failed")
         finally:
             try:
                 await self.logout(session)
