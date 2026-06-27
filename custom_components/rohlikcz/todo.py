@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ICON_CART
 from .hub import RohlikAccount
@@ -27,16 +28,16 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the Rohlik shopping cart todo platform config entry."""
-    rohlik_hub = hass.data[DOMAIN][config_entry.entry_id]
+    rohlik_hub: RohlikAccount = config_entry.runtime_data
 
     async_add_entities([RohlikCartTodo(rohlik_hub)])
 
 
-class RohlikCartTodo(TodoListEntity):
+class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
     """A Rohlik Shopping Cart TodoListEntity."""
 
     _attr_has_entity_name = True
-    _attr_supported_features = (TodoListEntityFeature.CREATE_TODO_ITEM | TodoListEntityFeature.DELETE_TODO_ITEM | TodoListEntityFeature.UPDATE_TODO_ITEM)
+    _attr_supported_features = (TodoListEntityFeature.CREATE_TODO_ITEM | TodoListEntityFeature.DELETE_TODO_ITEM)
     _attr_translation_key = "shopping_cart"
     _attr_icon = ICON_CART
 
@@ -45,26 +46,22 @@ class RohlikCartTodo(TodoListEntity):
         rohlik_hub: RohlikAccount
     ) -> None:
         """Initialize RohlikCartTodo."""
-        super().__init__()
+        super().__init__(rohlik_hub)
         self._rohlik_hub = rohlik_hub
         self._attr_unique_id = f"{rohlik_hub.unique_id}-cart"
         self._attr_name = "Rohlik Shopping Cart"
         self._attr_device_info = rohlik_hub.device_info
-        self._cart_content = None
-
-        # Register callback for updates
-        rohlik_hub.register_callback(self.async_write_ha_state)
 
     @property
     def todo_items(self) -> list[TodoItem] | None:
         """Handle updated data from the hub."""
-        self._cart_content = self._rohlik_hub.data["cart"]
+        cart_content = self._rohlik_hub.data["cart"]
 
-        if not self._cart_content:
+        if not cart_content:
             return None
 
         items = []
-        for product in self._cart_content.get("products", []):
+        for product in cart_content.get("products", []):
             # Format the summary to include relevant information
             summary = f"{product['name']} ({product['quantity']}) - {product['price']} Kč"
 
@@ -112,7 +109,7 @@ class RohlikCartTodo(TodoListEntity):
         result = await self._rohlik_hub.search_and_add(product_name, quantity)
 
         if not result or not result.get("success", False):
-            _LOGGER.error("Error with adding product to")
+            _LOGGER.error("Failed to add product '%s' to cart", product_name)
             raise ServiceValidationError(f"Product not found: {product_name}")
 
 
@@ -122,13 +119,6 @@ class RohlikCartTodo(TodoListEntity):
             try:
                 # Call the new delete_from_cart method with the cart_item_id
                 await self._rohlik_hub.delete_from_cart(uid)
-                _LOGGER.error(f"Deleted item: {uid}")
+                _LOGGER.debug("Deleted item: %s", uid)
             except Exception as err:
                 _LOGGER.error("Error deleting item %s: %s", uid, err)
-
-
-    async def async_update_todo_item(self, item: TodoItem) -> None:
-        """Update an item to the To-do list."""
-        pass
-
-

@@ -25,6 +25,13 @@
           "top_n": "Kolik top položek zobrazit v atributech senzorů (podle útraty). Výchozí: 10.",
           "hide_discontinued": "Vyloučit zrušené produkty z top kategorií a položek."
         }
+      },
+      "reauth_confirm": {
+        "title": "Opětovné přihlášení Rohlik.cz",
+        "description": "Uložené přihlašovací údaje pro {email} již nejsou platné. Zadejte znovu heslo.",
+        "data": {
+          "password": "Heslo"
+        }
       }
     },
     "error": {
@@ -33,7 +40,9 @@
       "unknown": "Neočekávaná chyba"
     },
     "abort": {
-      "already_configured": "Účet je již nakonfigurován"
+      "already_configured": "Účet je již nakonfigurován",
+      "reauth_successful": "Opětovné přihlášení proběhlo úspěšně",
+      "wrong_account": "Přihlašovací údaje patří jinému účtu Rohlik"
     }
   },
   "options": {

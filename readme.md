@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/v/release/dvejsada/HA-RohlikCZ)](https://github.com/dvejsada/HA-RohlikCZ/releases)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-%3E%3D2024.12-blue)](https://www.home-assistant.io/)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-%3E%3D2025.2-blue)](https://www.home-assistant.io/)
 
 Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home Assistant! Track deliveries, monitor your cart, automate shopping, and never miss a delivery window — all from your smart home dashboard.
 
@@ -52,6 +52,9 @@ Install in one click via the Home Assistant Community Store:
    - **Email** — your Rohlík.cz account email
    - **Password** — your Rohlík.cz account password
 5. Click **Submit** — entities will be set up automatically.
+
+> [!NOTE]
+> If your password later changes or stops working, Home Assistant prompts you to re-enter it (**re-authentication**) instead of the integration silently failing. Each Rohlík.cz account can only be added once.
 
 ---
 
@@ -144,7 +147,7 @@ Events are sourced from upcoming orders and the last 50 delivered orders. Events
 - **Delivery Time** - Timestamp of predicted exact delivery time for order made
 - **Monthly Spent** - Total amount spent in the current month
 - **Yearly Spent** - Total amount spent in the current year (requires analytics)
-- **All Time Spent** - Total amount spent across all tracked orders (requires analytics)
+- **All Time Spent** - Total amount spent across all tracked orders (requires analytics). The `by_year` attribute breaks the total down per year (`total` and `order_count` for each year)
 
 #### Spending Analytics Sensors (opt-in)
 
@@ -182,6 +185,12 @@ Data is refreshed from Rohlík.cz **every 10 minutes** automatically. The update
 - **Update Data** - Force the integration to update data from Rohlik.cz immediately.
 - **Fetch Order History** - Download full order history and enrich with item details and categories. Runs automatically when analytics is enabled, but can also be triggered manually.
 You can trigger an immediate refresh at any time using the **`rohlikcz.update_data`** action.
+
+---
+
+## 🩺 Diagnostics
+
+If something isn't working, download the integration's diagnostics from **Settings → Devices & Services → Rohlík.cz → ⋮ (three dots) → Download diagnostics** and attach the file to your bug report. Credentials and personal details (email, phone, name, address) are automatically redacted.
 
 ---
 

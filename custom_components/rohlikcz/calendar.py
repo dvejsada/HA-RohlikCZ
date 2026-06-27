@@ -26,7 +26,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up calendar entities for passed config_entry in HA."""
-    rohlik_hub: RohlikAccount = hass.data[DOMAIN][config_entry.entry_id]  # type: ignore[Any]
+    rohlik_hub: RohlikAccount = config_entry.runtime_data
     async_add_entities([RohlikDeliveryCalendar(rohlik_hub)])
 
 
@@ -47,16 +47,16 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
     def _extract_orders_list(self, data_key: str) -> list:
         """Extract orders list from API response, handling wrapped responses."""
         raw_data = self._rohlik_account.data.get(data_key)
-        
+
         if raw_data is None:
             _LOGGER.debug("No data found for key: %s", data_key)
             return []
-        
+
         # If it's already a list, return it
         if isinstance(raw_data, list):
             _LOGGER.debug("Found %d orders in %s", len(raw_data), data_key)
             return raw_data
-        
+
         # If it's a dict, try to extract the list from common response structures
         if isinstance(raw_data, dict):
             # Try common response wrapper keys
@@ -66,7 +66,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                     return raw_data[key]
             _LOGGER.warning("Expected list in %s but got dict without list field: %s", data_key, list(raw_data.keys()))
             return []
-        
+
         _LOGGER.warning("Unexpected data type for %s: %s", data_key, type(raw_data))
         return []
 
@@ -119,7 +119,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                     "start": order["start"].isoformat(),
                     "end": order["end"].isoformat(),
                 }
-                
+
                 # Build description with optional details
                 description_parts = []
                 if order.get("status"):
@@ -137,7 +137,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                     description=description,
                     uid=str(order["id"]),
                 )
-                
+
                 # Update or add event
                 if order_id in self._events_by_order_id:
                     _LOGGER.debug("Updating calendar event for order %s", order_id)
@@ -148,20 +148,20 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                         order["start"],
                         order["end"]
                     )
-                
+
                 self._events_by_order_id[order_id] = event
-                
+
             except (KeyError, TypeError) as e:
                 _LOGGER.warning("Error creating calendar event for order %s: %s", order.get('id'), e)
                 continue
-        
+
         # Recreate events for delivered orders that don't have delivery slot info
         # but we have stored delivery slot info from when they were in next_order
         for order in (delivered_orders or []):
             order_id = str(order.get('id', ''))
             if not order_id:
                 continue
-            
+
             # Update existing event to mark as delivered if needed
             if order_id in self._events_by_order_id:
                 existing_event = self._events_by_order_id[order_id]
@@ -179,14 +179,14 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                         )
                         _LOGGER.debug("Tagged order %s as delivered", order_id)
                 continue
-            
+
             # Check if we have stored delivery slot info for this order
             if order_id in self._stored_delivery_slots:
                 try:
                     slot_info = self._stored_delivery_slots[order_id]
                     start_dt = dt_util.parse_datetime(slot_info["start"])
                     end_dt = dt_util.parse_datetime(slot_info["end"])
-                    
+
                     if start_dt and end_dt:
                         # Build description with optional details
                         description_parts = []
@@ -198,7 +198,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                         if price_amount is not None:
                             description_parts.append(f"Price: {price_amount} CZK")
                         description = "\n".join(description_parts) if description_parts else None
-                        
+
                         event = CalendarEvent(
                             start=start_dt,
                             end=end_dt,
@@ -206,7 +206,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                             description=description,
                             uid=order_id,
                         )
-                        
+
                         self._events_by_order_id[order_id] = event
                         _LOGGER.debug(
                             "Recreated calendar event for delivered order %s using stored delivery slot: %s to %s",
@@ -217,7 +217,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                 except (KeyError, TypeError, ValueError) as e:
                     _LOGGER.warning("Error recreating calendar event for delivered order %s: %s", order_id, e)
                     continue
-        
+
         # Clean up stored delivery slots for orders that no longer exist
         orders_to_remove_slots = set(self._stored_delivery_slots.keys()) - all_order_ids
         for order_id in orders_to_remove_slots:
@@ -238,17 +238,17 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
             return None
 
         now = dt_util.now()
-        
+
         # Find current active event (start <= now < end)
         for event in self._events:
             if event.start <= now < event.end:
                 return event
-        
+
         # Find next upcoming event (start > now)
         for event in self._events:
             if event.start > now:
                 return event
-        
+
         # No current or upcoming events
         return None
 
@@ -278,19 +278,19 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to hass."""
         await super().async_added_to_hass()
-        
+
         # Restore stored delivery slot information from previous session
         if (last_state := await self.async_get_last_state()) is not None:
             stored_slots = last_state.attributes.get("stored_delivery_slots", {})
             if stored_slots:
                 self._stored_delivery_slots = stored_slots
                 _LOGGER.debug("Restored %d stored delivery slots from previous session", len(stored_slots))
-        
-        # Initial update
+
+        # Initial update - populate events and write state immediately so the
+        # calendar is correct on add rather than after the next refresh.
         _LOGGER.debug("Calendar entity added to hass, updating events")
         self._update_events()
-        # Register callback for updates
-        self._rohlik_account.register_callback(self._on_data_update)
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -298,15 +298,9 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
         return {
             "stored_delivery_slots": self._stored_delivery_slots,
         }
-    
-    def _on_data_update(self) -> None:
-        """Handle data updates from RohlikAccount."""
-        _LOGGER.debug("Calendar received data update callback")
+
+    def _handle_coordinator_update(self) -> None:
+        """Rebuild events when the coordinator delivers fresh data."""
+        _LOGGER.debug("Calendar received coordinator update")
         self._update_events()
         self.async_write_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Run when entity is being removed from hass."""
-        self._rohlik_account.remove_callback(self._on_data_update)
-        await super().async_will_remove_from_hass()
-

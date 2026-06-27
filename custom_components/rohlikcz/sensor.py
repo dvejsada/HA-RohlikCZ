@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import logging
 import re
-import datetime
 
 from collections.abc import Mapping
-from datetime import timedelta, datetime, time
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
@@ -23,8 +22,6 @@ from .entity import BaseEntity
 from .hub import RohlikAccount
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
 
-SCAN_INTERVAL = timedelta(seconds=600)
-
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
@@ -33,7 +30,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback
 ) -> None:
     """Add sensors for passed config_entry in HA."""
-    rohlik_hub: RohlikAccount = hass.data[DOMAIN][config_entry.entry_id]  # type: ignore[Any]
+    rohlik_hub: RohlikAccount = config_entry.runtime_data
     analytics = rohlik_hub.analytics
 
     entities = [
@@ -151,18 +148,14 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
         await super().async_added_to_hass()
-        
+
         # Restore last state if available
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
                 self._last_value = last_state.state
             if last_state.attributes:
                 self._last_attributes = dict(last_state.attributes)
-        
-        self._rohlik_account.register_callback(self.async_write_ha_state)
 
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     """Sensor for showing delivery time."""
@@ -228,7 +221,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
         await super().async_added_to_hass()
-        
+
         # Restore last state if available
         if (last_state := await self.async_get_last_state()) is not None:
             if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
@@ -244,11 +237,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                         "Failed to restore delivery time from last state %r",
                         last_state.state,
                     )
-        
-        self._rohlik_account.register_callback(self.async_write_ha_state)
 
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 class FirstExpressSlot(BaseEntity, SensorEntity):
     """Sensor for first available delivery."""
@@ -296,13 +285,6 @@ class FirstExpressSlot(BaseEntity, SensorEntity):
         return  "https://cdn.rohlik.cz/images/icons/preselected-slots/express.png"
 
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
-
 class FirstStandardSlot(BaseEntity, SensorEntity):
     """Sensor for first available delivery."""
 
@@ -348,12 +330,6 @@ class FirstStandardSlot(BaseEntity, SensorEntity):
     def entity_picture(self) -> str | None:
         return  "https://cdn.rohlik.cz/images/icons/preselected-slots/first.png"
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class FirstEcoSlot(BaseEntity, SensorEntity):
     """Sensor for first available delivery."""
@@ -395,12 +371,6 @@ class FirstEcoSlot(BaseEntity, SensorEntity):
     def entity_picture(self) -> str | None:
         return  "https://cdn.rohlik.cz/images/icons/preselected-slots/eco.png"
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class FirstDeliverySensor(BaseEntity, SensorEntity):
     """Sensor for first available delivery."""
@@ -428,12 +398,6 @@ class FirstDeliverySensor(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_DELIVERY
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class AccountIDSensor(BaseEntity, SensorEntity):
     """Sensor for account ID."""
@@ -450,12 +414,6 @@ class AccountIDSensor(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_ACCOUNT
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class EmailSensor(BaseEntity, SensorEntity):
@@ -474,12 +432,6 @@ class EmailSensor(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_EMAIL
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class PhoneSensor(BaseEntity, SensorEntity):
     """Sensor for phone number."""
@@ -497,12 +449,6 @@ class PhoneSensor(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_PHONE
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class CreditAmount(BaseEntity, SensorEntity):
     """Sensor for credit amount."""
@@ -519,16 +465,10 @@ class CreditAmount(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CREDIT
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     """Sensor for amount spent in current month with HA-side accumulation.
-    
+
     Only tracks orders that are delivered and closed (have final price).
     Orders from the delivered_orders endpoint should all be finalized.
     Uses Home Assistant's restore state to persist monthly totals across restarts.
@@ -548,7 +488,7 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     def _is_order_final(self, order: dict) -> bool:
         """
         Verify order has a final price.
-        
+
         Since orders come from the 'delivered_orders' endpoint, they should be finalized.
         We verify by checking that priceComposition exists and has a valid amount.
         """
@@ -556,17 +496,17 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
         price_comp = order.get('priceComposition')
         if not price_comp:
             return False
-        
+
         # Check if total exists
         total = price_comp.get('total')
         if not total:
             return False
-        
+
         # Check if amount exists and is a valid number
         amount = total.get('amount')
         if amount is None:
             return False
-        
+
         # Verify it's a valid number
         try:
             float(amount)
@@ -577,18 +517,17 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
         await super().async_added_to_hass()
-        
+
         if (last_state := await self.async_get_last_state()) is not None:
             self._monthly_total = last_state.attributes.get("monthly_total", 0.0)
             self._processed_orders = set(last_state.attributes.get("processed_orders", []))
             self._current_month = last_state.attributes.get("current_month", datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m"))
             if last_reset_str := last_state.attributes.get("last_reset"):
                 self._last_reset = datetime.fromisoformat(last_reset_str)
-        
+
         self._check_and_reset_month()
         self._process_new_orders()
-        
-        self._rohlik_account.register_callback(self.async_write_ha_state)
+
 
     def _check_and_reset_month(self) -> None:
         """Reset total if month changed."""
@@ -602,65 +541,69 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
 
     def _process_new_orders(self) -> None:
         """Process new orders and add to total.
-        
+
         Only processes orders that are delivered and closed (have final price).
         Uses order ID for unique identification.
         """
         orders = self._rohlik_account.data.get('delivered_orders', [])
         if not orders:
             return
-        
+
         current_month_pattern = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m-")
         new_orders_count = 0
-        
+
         for order in orders:
             try:
                 order_time = order.get('orderTime', '')
-                
+
                 # Only process orders from current month
                 if current_month_pattern not in order_time:
                     continue
-                
+
                 # Verify order has final price (delivered and closed)
                 if not self._is_order_final(order):
                     _LOGGER.debug(f"Order {order.get('id')} does not have final price, skipping")
                     continue
-                
+
                 # Get order ID (unique identifier)
                 order_id = order.get('id')
                 if not order_id:
                     _LOGGER.warning(f"Order missing ID, skipping: {order.get('orderTime')}")
                     continue
-                
+
                 order_key = str(order_id)
-                
+
                 # Skip if already processed
                 if order_key in self._processed_orders:
                     continue
-                
+
                 # Get the final price
                 amount = float(order['priceComposition']['total']['amount'])
-                
+
                 # Add to total and mark as processed
                 self._monthly_total += amount
                 self._processed_orders.add(order_key)
                 new_orders_count += 1
-                
+
                 _LOGGER.debug(f"Added order {order_id} with amount {amount} CZK. New total: {self._monthly_total} CZK")
-                
+
             except (KeyError, ValueError, TypeError) as e:
                 _LOGGER.warning(f"Skipping order due to error: {e}, order ID: {order.get('id')}")
                 continue
-        
+
         if new_orders_count > 0:
             _LOGGER.info(f"Processed {new_orders_count} new order(s). Monthly total: {self._monthly_total} CZK")
 
     @property
     def native_value(self) -> float | None:
         """Returns amount spent in current month."""
+        return self._monthly_total if self._monthly_total > 0 else 0.0
+
+    def _handle_coordinator_update(self) -> None:
+        """Process newly delivered orders on each coordinator refresh."""
         self._check_and_reset_month()
         self._process_new_orders()
-        return self._monthly_total if self._monthly_total > 0 else 0.0
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
@@ -678,9 +621,6 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def icon(self) -> str:
         return ICON_MONTHLY_SPENT
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class YearlySpent(BaseEntity, SensorEntity):
@@ -717,12 +657,6 @@ class YearlySpent(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_YEARLY_SPENT
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class AllTimeSpent(BaseEntity, SensorEntity):
     """Sensor for total amount spent across all tracked orders."""
@@ -757,12 +691,6 @@ class AllTimeSpent(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_ALLTIME_SPENT
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class CategorySpendingYearly(BaseEntity, SensorEntity):
@@ -802,12 +730,6 @@ class CategorySpendingYearly(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class CategorySpendingAllTime(BaseEntity, SensorEntity):
     """Sensor for spending breakdown by category across all time."""
@@ -843,12 +765,6 @@ class CategorySpendingAllTime(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class CategorySpendingL0Yearly(BaseEntity, SensorEntity):
@@ -888,12 +804,6 @@ class CategorySpendingL0Yearly(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class CategorySpendingL0AllTime(BaseEntity, SensorEntity):
     """Sensor for spending breakdown by L0 category across all time."""
@@ -929,12 +839,6 @@ class CategorySpendingL0AllTime(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class CategorySpendingL2Yearly(BaseEntity, SensorEntity):
@@ -974,12 +878,6 @@ class CategorySpendingL2Yearly(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class CategorySpendingL2AllTime(BaseEntity, SensorEntity):
     """Sensor for spending breakdown by L2 category across all time."""
@@ -1015,12 +913,6 @@ class CategorySpendingL2AllTime(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class CategorySpendingL3Yearly(BaseEntity, SensorEntity):
@@ -1060,12 +952,6 @@ class CategorySpendingL3Yearly(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class CategorySpendingL3AllTime(BaseEntity, SensorEntity):
     """Sensor for spending breakdown by L3 category across all time."""
@@ -1101,12 +987,6 @@ class CategorySpendingL3AllTime(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class ItemSpendingYearly(BaseEntity, SensorEntity):
@@ -1144,12 +1024,6 @@ class ItemSpendingYearly(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class ItemSpendingAllTime(BaseEntity, SensorEntity):
     """Sensor for spending breakdown by individual item across all time."""
@@ -1184,12 +1058,6 @@ class ItemSpendingAllTime(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CATEGORY_SPENDING
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class NoLimitOrders(BaseEntity, SensorEntity):
     """Sensor for remaining no limit orders."""
@@ -1207,12 +1075,6 @@ class NoLimitOrders(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_NO_LIMIT
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class FreeExpressOrders(BaseEntity, SensorEntity):
     """Sensor for remaining free express orders."""
@@ -1229,12 +1091,6 @@ class FreeExpressOrders(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_FREE_EXPRESS
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class BagsAmountSensor(BaseEntity, SensorEntity):
@@ -1261,12 +1117,6 @@ class BagsAmountSensor(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_BAGS
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class PremiumDaysRemainingSensor(BaseEntity, SensorEntity):
@@ -1297,12 +1147,6 @@ class PremiumDaysRemainingSensor(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_PREMIUM_DAYS
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class CartPriceSensor(BaseEntity, SensorEntity):
     """Sensor for total cart price."""
@@ -1330,11 +1174,6 @@ class CartPriceSensor(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_CART
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 class NextOrderSince(BaseEntity, SensorEntity):
     """Sensor for start of delivery window of next order."""
@@ -1356,11 +1195,6 @@ class NextOrderSince(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_NEXT_ORDER_SINCE
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 class NextOrderTill(BaseEntity, SensorEntity):
     """Sensor for finish of delivery window of next order."""
@@ -1381,12 +1215,6 @@ class NextOrderTill(BaseEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_NEXT_ORDER_TILL
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
 
 
 class LastOrder(BaseEntity, SensorEntity):
@@ -1417,12 +1245,6 @@ class LastOrder(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_LAST_ORDER
 
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
-
 
 class UpdateSensor(BaseEntity, SensorEntity):
     """Sensor for API update."""
@@ -1433,15 +1255,6 @@ class UpdateSensor(BaseEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     @property
-    def native_value(self) -> datetime:
-        return datetime.now(tz=ZoneInfo("Europe/Prague"))
-
-    async def async_update(self) -> None:
-        """Calls regular update of data from API."""
-        await self._rohlik_account.async_update()
-
-    async def async_added_to_hass(self) -> None:
-        self._rohlik_account.register_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._rohlik_account.remove_callback(self.async_write_ha_state)
+    def native_value(self) -> datetime | None:
+        """Time of the last data fetch from the API."""
+        return self._rohlik_account.last_refresh

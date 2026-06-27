@@ -3,15 +3,21 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Callable
-from datetime import datetime
-from typing import Any, cast, List, Optional, Dict
+from datetime import datetime, timedelta
+from typing import Any, Optional, Dict
 from zoneinfo import ZoneInfo
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .const import DOMAIN
+from .errors import InvalidCredentialsError, APIRequestFailedError, RohlikczError
 from .rohlik_api import RohlikCZAPI
+
+#: How often the integration refreshes data from the Rohlik API.
+UPDATE_INTERVAL = timedelta(seconds=600)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -350,20 +356,28 @@ class OrderStore:
         return result
 
 
-class RohlikAccount:
-    """Setting RohlikCZ account as device."""
+class RohlikAccount(DataUpdateCoordinator[dict]):
+    """RohlikCZ account modelled as a Home Assistant data update coordinator."""
 
-    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True) -> None:
+    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True, entry: ConfigEntry | None = None) -> None:
         """Initialize account info."""
-        super().__init__()
-        self._hass = hass
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=UPDATE_INTERVAL,
+            config_entry=entry,
+        )
         self._username: str = username
         self._password: str = password
         self._rohlik_api = RohlikCZAPI(self._username, self._password)
-        self.data: dict = {}
-        self._callbacks: set[Callable[[], None]] = set()
         self._order_store: OrderStore | None = None
+        self._last_refresh: datetime | None = None
+        # _store_lock guards brief in-memory store mutations (contended by the
+        # refresh cycle). _enrich_lock serializes whole enrichment runs and may
+        # be held across network I/O without blocking the refresh.
         self._store_lock = asyncio.Lock()
+        self._enrich_lock = asyncio.Lock()
         self._analytics: list[str] = analytics or []
         self._top_n: int = top_n
         self._hide_discontinued: bool = hide_discontinued
@@ -389,11 +403,8 @@ class RohlikAccount:
         return self._hide_discontinued
 
     @property
-    def has_address(self):
-        if self.data["next_delivery_slot"]:
-            return True
-        else:
-            return False
+    def has_address(self) -> bool:
+        return bool((self.data or {}).get("next_delivery_slot"))
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -401,8 +412,12 @@ class RohlikAccount:
         return {"identifiers": {(DOMAIN, self.data["login"]["data"]["user"]["id"])}, "name": self.data["login"]["data"]["user"]["name"], "manufacturer": "Rohlík.cz"}
 
     @property
-    def name(self) -> str:
-        """Provides name for account."""
+    def account_name(self) -> str:
+        """Provides display name for the account holder.
+
+        Note: ``name`` is reserved by DataUpdateCoordinator, so the account's
+        display name is exposed separately.
+        """
         return self.data["login"]["data"]["user"]["name"]
 
     @property
@@ -418,50 +433,90 @@ class RohlikAccount:
     def order_store(self) -> OrderStore | None:
         return self._order_store
 
-    async def async_update(self) -> None:
-        """ Updates the data from API."""
+    @property
+    def last_refresh(self) -> datetime | None:
+        """Timestamp of the last data fetch from the API."""
+        return self._last_refresh
 
-        self.data = await self._rohlik_api.get_data()
+    async def _async_update_data(self) -> dict:
+        """Fetch data from the Rohlik API (called by the coordinator)."""
+        try:
+            data = await self._rohlik_api.get_data()
+        except InvalidCredentialsError as err:
+            # Credentials are no longer valid - trigger the reauth flow.
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except (APIRequestFailedError, RohlikczError) as err:
+            raise UpdateFailed(str(err)) from err
+
+        self._last_refresh = datetime.now(ZoneInfo("Europe/Prague"))
 
         # Initialize order store on first update (only if analytics enabled)
-        if self._analytics and not self._order_store and self.data.get("login"):
-            user_id = str(self.data["login"]["data"]["user"]["id"])
-            storage_dir = self._hass.config.path(".storage")
-            self._order_store = await OrderStore.async_create(storage_dir, user_id, self._hass)
+        if self._analytics and not self._order_store and data.get("login"):
+            user_id = str(data["login"]["data"]["user"]["id"])
+            storage_dir = self.hass.config.path(".storage")
+            self._order_store = await OrderStore.async_create(storage_dir, user_id, self.hass)
 
         # Process delivered orders into persistent store and auto-enrich new ones
-        if self._analytics and self._order_store and self.data.get("delivered_orders"):
+        if self._analytics and self._order_store and data.get("delivered_orders"):
             async with self._store_lock:
-                new = self._order_store.process_orders(self.data["delivered_orders"])
+                new = self._order_store.process_orders(data["delivered_orders"])
                 if new > 0:
                     await self._order_store.async_save()
             if new > 0:
                 # Schedule enrichment in background (don't block update cycle / setup)
-                self._hass.async_create_task(self._auto_enrich_new_orders(new))
+                self.config_entry.async_create_background_task(
+                    self.hass, self._auto_enrich_new_orders(new), "rohlik_auto_enrich"
+                )
 
-        await self.publish_updates()
+        return data
+
+    async def async_update(self) -> None:
+        """Force an immediate data refresh (used by services and after cart changes)."""
+        await self.async_refresh()
 
     async def _auto_enrich_new_orders(self, new_count: int) -> None:
-        """Auto-enrich recently added orders in the background."""
-        enriched = False
+        """Auto-enrich recently added orders in the background.
+
+        The store lock is held only around in-memory reads/writes, never during
+        network I/O, so a slow enrichment doesn't block the regular refresh
+        cycle (which also takes the lock).
+        """
         try:
-            async with self._store_lock:
-                unenriched = self._order_store.unenriched_order_ids
-                recent_unenriched = unenriched[-new_count:] if len(unenriched) >= new_count else unenriched
-                if recent_unenriched:
-                    items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
+            # Serialize against manual backfill/enrichment runs.
+            async with self._enrich_lock:
+                # Snapshot which orders still need enrichment.
+                async with self._store_lock:
+                    unenriched = list(self._order_store.unenriched_order_ids)
+                    recent_unenriched = unenriched[-new_count:] if len(unenriched) >= new_count else unenriched
+                if not recent_unenriched:
+                    return
+
+                # Fetch item details (network I/O, store lock released).
+                items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
+
+                # Apply item results and find products needing categories.
+                async with self._store_lock:
                     for order_id, items in items_map.items():
                         self._order_store.add_items_to_order(order_id, items)
                     uncategorized = self._order_store.uncategorized_product_ids()
-                    if uncategorized:
-                        cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
+
+                # Fetch categories (network I/O, store lock released).
+                cat_map = {}
+                if uncategorized:
+                    cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
+
+                # Persist all results.
+                enriched = False
+                async with self._store_lock:
+                    if cat_map:
                         self._order_store.update_product_categories(cat_map)
                     if items_map:
                         await self._order_store.async_save()
-                        _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
                         enriched = True
+
             if enriched:
-                await self.publish_updates()
+                _LOGGER.info(f"Auto-enriched {len(items_map)} new orders")
+                self.async_update_listeners()
         except Exception as err:
             _LOGGER.warning(f"Auto-enrichment of new orders failed: {err}")
 
@@ -470,30 +525,32 @@ class RohlikAccount:
 
         Returns dict with stats.
         """
-        async with self._store_lock:
-            # Step 1: Fetch order list (existing behavior)
+        async with self._enrich_lock:
+            # Step 1: Fetch order list (network I/O, store lock released)
             all_orders = await self._rohlik_api.fetch_all_delivered_orders()
             new_orders = 0
             if self._order_store and all_orders:
-                new_orders = self._order_store.process_orders(all_orders)
-                if new_orders > 0:
-                    await self._order_store.async_save()
+                async with self._store_lock:
+                    new_orders = self._order_store.process_orders(all_orders)
+                    if new_orders > 0:
+                        await self._order_store.async_save()
 
-            # Step 2: Enrich with items and categories
+            # Step 2: Enrich with items and categories (manages its own lock)
             if self._order_store:
                 enrich_stats = await self._enrich_order_details(hass=hass)
                 enrich_stats["new_orders"] = new_orders
                 # Mark backfill as done so we don't re-download on next restart
                 if not self._order_store.backfill_complete:
-                    self._order_store.mark_backfill_complete()
-                    await self._order_store.async_save()
+                    async with self._store_lock:
+                        self._order_store.mark_backfill_complete()
+                        await self._order_store.async_save()
                 return enrich_stats
 
             return {"total_orders": 0, "new_orders": 0}
 
     def _t(self, key: str) -> str:
         """Get localized notification string based on HA language."""
-        lang = self._hass.config.language or "en"
+        lang = self.hass.config.language or "en"
         return _NOTIFICATIONS.get(lang, _NOTIFICATIONS["en"]).get(key, _NOTIFICATIONS["en"][key])
 
     async def _notify(self, hass, message: str, title: str, notification_id: str = "rohlik_enrichment") -> None:
@@ -508,17 +565,20 @@ class RohlikAccount:
     async def enrich_order_details(self, hass=None) -> dict:
         """Fetch item details and categories for all unenriched orders.
 
-        Public entry point — acquires the store lock.
+        Public entry point — serializes enrichment runs via _enrich_lock.
         """
-        async with self._store_lock:
+        async with self._enrich_lock:
             return await self._enrich_order_details(hass=hass)
 
     async def _enrich_order_details(self, hass=None) -> dict:
-        """Internal enrichment logic — caller must hold _store_lock.
+        """Internal enrichment logic — caller must hold _enrich_lock.
 
         Two-phase enrichment:
         1. Fetch items for orders missing them
         2. Fetch categories for products not yet in cache
+
+        The store lock is taken only around in-memory mutations, never during
+        the network calls, so the regular refresh cycle isn't blocked.
 
         Returns stats dict.
         """
@@ -528,22 +588,26 @@ class RohlikAccount:
         stats = {"orders_enriched": 0, "products_categorized": 0, "errors": 0}
 
         # Phase 1: Fetch items for unenriched orders
-        unenriched = self._order_store.unenriched_order_ids
+        async with self._store_lock:
+            unenriched = list(self._order_store.unenriched_order_ids)
         if unenriched:
             await self._notify(hass,
                 self._t("phase1").format(count=len(unenriched)),
                 self._t("title_progress"))
             _LOGGER.info(f"Enriching {len(unenriched)} orders with item details...")
             items_map = await self._rohlik_api.enrich_orders_with_items(unenriched)
-            for order_id, items in items_map.items():
-                if self._order_store.add_items_to_order(order_id, items):
-                    stats["orders_enriched"] += 1
+            async with self._store_lock:
+                for order_id, items in items_map.items():
+                    if self._order_store.add_items_to_order(order_id, items):
+                        stats["orders_enriched"] += 1
+                if stats["orders_enriched"] > 0:
+                    await self._order_store.async_save()
             if stats["orders_enriched"] > 0:
-                await self._order_store.async_save()
                 _LOGGER.info(f"Added items to {stats['orders_enriched']} orders")
 
         # Phase 2: Fetch categories for uncategorized products
-        uncategorized = self._order_store.uncategorized_product_ids()
+        async with self._store_lock:
+            uncategorized = self._order_store.uncategorized_product_ids()
         if uncategorized:
             total_products = len(uncategorized)
             await self._notify(hass,
@@ -559,24 +623,26 @@ class RohlikAccount:
 
             _LOGGER.info(f"Fetching categories for {total_products} products...")
             cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized, progress_callback=progress_cb)
-            new_cats = self._order_store.update_product_categories(cat_map)
-            stats["products_categorized"] = new_cats
-            if new_cats > 0:
-                await self._order_store.async_save()
+            async with self._store_lock:
+                new_cats = self._order_store.update_product_categories(cat_map)
+                stats["products_categorized"] = new_cats
+                if new_cats > 0:
+                    await self._order_store.async_save()
             _LOGGER.info(f"Categorized {new_cats} products")
 
-        # Done
-        await self._notify(hass,
-            self._t("complete").format(
-                orders_enriched=stats["orders_enriched"],
-                products_categorized=stats["products_categorized"],
-                total_orders=self._order_store.alltime_count(),
-                enriched_orders=self._order_store.enriched_count,
-                products_in_cache=self._order_store.cached_product_count,
-            ),
-            self._t("title_complete"))
+        # Done - only notify if something was actually enriched this run.
+        if stats["orders_enriched"] > 0 or stats["products_categorized"] > 0:
+            await self._notify(hass,
+                self._t("complete").format(
+                    orders_enriched=stats["orders_enriched"],
+                    products_categorized=stats["products_categorized"],
+                    total_orders=self._order_store.alltime_count(),
+                    enriched_orders=self._order_store.enriched_count,
+                    products_in_cache=self._order_store.cached_product_count,
+                ),
+                self._t("title_complete"))
 
-        await self.publish_updates()
+        self.async_update_listeners()
         return {
             "total_orders": self._order_store.alltime_count(),
             "enriched_orders": self._order_store.enriched_count,
@@ -585,19 +651,6 @@ class RohlikAccount:
             "orders_enriched_this_run": stats["orders_enriched"],
             "products_categorized_this_run": stats["products_categorized"],
         }
-
-    def register_callback(self, callback: Callable[[], None]) -> None:
-        """Register callback, called when there are new data."""
-        self._callbacks.add(callback)
-
-    def remove_callback(self, callback: Callable[[], None]) -> None:
-        """Remove previously registered callback."""
-        self._callbacks.discard(callback)
-
-    async def publish_updates(self) -> None:
-        """Schedule call to all registered callbacks."""
-        for callback in self._callbacks:
-            callback()
 
     # New service methods
     async def add_to_cart(self, product_id: int, quantity: int) -> Dict:
