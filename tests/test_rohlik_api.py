@@ -233,6 +233,24 @@ async def test_get_timeslots_reuses_session() -> None:
     assert second == slots
 
 
+async def test_get_timeslots_retries_on_401() -> None:
+    """On a 401 response, get_timeslots re-authenticates and retries once."""
+    login_with_addr = {"status": 200, "data": {"user": {"id": 123}, "address": {"id": 777}}}
+    slots = {"data": {"preselectedSlots": []}}
+    with aioresponses() as m:
+        m.post(LOGIN_URL, payload=login_with_addr)  # initial login
+        m.get(re.compile(r"^https://www\.rohlik\.cz/services/frontend-service/timeslots-api/"), status=401)
+        m.post(LOGIN_URL, payload=login_with_addr)  # re-auth after 401
+        m.get(
+            re.compile(r"^https://www\.rohlik\.cz/services/frontend-service/timeslots-api/"),
+            payload=slots,
+        )
+        api = _api()
+        result = await api.get_timeslots()
+        await api.async_close()
+    assert result == slots
+
+
 async def test_get_timeslots_no_address_returns_none() -> None:
     """Without a delivery address there is no slot URL, so None is returned."""
     with aioresponses() as m:
