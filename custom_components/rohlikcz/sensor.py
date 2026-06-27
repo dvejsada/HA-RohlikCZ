@@ -8,7 +8,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from dataclasses import dataclass
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
@@ -57,22 +58,10 @@ async def async_setup_entry(
         entities.append(YearlySpent(rohlik_hub))
         entities.append(AllTimeSpent(rohlik_hub))
 
-    # Category sensors per selected level
-    if "categories_l0" in analytics:
-        entities.append(CategorySpendingL0Yearly(rohlik_hub))
-        entities.append(CategorySpendingL0AllTime(rohlik_hub))
-    if "categories_l1" in analytics:
-        entities.append(CategorySpendingYearly(rohlik_hub))
-        entities.append(CategorySpendingAllTime(rohlik_hub))
-    if "categories_l2" in analytics:
-        entities.append(CategorySpendingL2Yearly(rohlik_hub))
-        entities.append(CategorySpendingL2AllTime(rohlik_hub))
-    if "categories_l3" in analytics:
-        entities.append(CategorySpendingL3Yearly(rohlik_hub))
-        entities.append(CategorySpendingL3AllTime(rohlik_hub))
-    if "per_item" in analytics:
-        entities.append(ItemSpendingYearly(rohlik_hub))
-        entities.append(ItemSpendingAllTime(rohlik_hub))
+    # Category / item spending sensors per selected analytics option.
+    for option, descriptions in SPENDING_DESCRIPTIONS.items():
+        if option in analytics:
+            entities.extend(SpendingBreakdownSensor(rohlik_hub, d) for d in descriptions)
 
     if rohlik_hub.has_address:
         entities.append(FirstExpressSlot(rohlik_hub))
@@ -693,370 +682,121 @@ class AllTimeSpent(BaseEntity, SensorEntity):
         return ICON_ALLTIME_SPENT
 
 
-class CategorySpendingYearly(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by category for current year."""
+@dataclass(frozen=True, kw_only=True)
+class SpendingBreakdownDescription(SensorEntityDescription):
+    """Describes a category/item spending-breakdown sensor."""
 
-    _attr_translation_key = "categories_this_year"
+    kind: str           # "category" or "item"
+    period: str         # "year" or "alltime"
+    level: int | None = None
+
+
+#: Analytics option -> (this-year description, all-time description).
+SPENDING_DESCRIPTIONS: dict[str, tuple[SpendingBreakdownDescription, ...]] = {
+    "categories_l0": (
+        SpendingBreakdownDescription(key="categories_l0_this_year", kind="category", level=0, period="year"),
+        SpendingBreakdownDescription(key="categories_l0_all_time", kind="category", level=0, period="alltime"),
+    ),
+    "categories_l1": (
+        SpendingBreakdownDescription(key="categories_this_year", kind="category", level=1, period="year"),
+        SpendingBreakdownDescription(key="categories_all_time", kind="category", level=1, period="alltime"),
+    ),
+    "categories_l2": (
+        SpendingBreakdownDescription(key="categories_l2_this_year", kind="category", level=2, period="year"),
+        SpendingBreakdownDescription(key="categories_l2_all_time", kind="category", level=2, period="alltime"),
+    ),
+    "categories_l3": (
+        SpendingBreakdownDescription(key="categories_l3_this_year", kind="category", level=3, period="year"),
+        SpendingBreakdownDescription(key="categories_l3_all_time", kind="category", level=3, period="alltime"),
+    ),
+    "per_item": (
+        SpendingBreakdownDescription(key="items_this_year", kind="item", period="year"),
+        SpendingBreakdownDescription(key="items_all_time", kind="item", period="alltime"),
+    ),
+}
+
+
+class SpendingBreakdownSensor(BaseEntity, SensorEntity):
+    """Generic spending-breakdown sensor for categories or items, by year or all time.
+
+    The state is the number of distinct categories/items with spending; the
+    breakdown (top N) and order/enrichment stats are exposed as attributes.
+    """
+
+    entity_description: SpendingBreakdownDescription
     _attr_should_poll = False
+    _attr_icon = ICON_CATEGORY_SPENDING
+
+    def __init__(self, rohlik_account: RohlikAccount, description: SpendingBreakdownDescription) -> None:
+        self.entity_description = description
+        super().__init__(rohlik_account)
+
+    @staticmethod
+    def _year() -> str:
+        return datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+
+    def _entries(self, store) -> list:
+        d = self.entity_description
+        hide = self._rohlik_account.hide_discontinued
+        if d.kind == "category":
+            if d.period == "year":
+                return store.category_totals(year=self._year(), level=d.level, hide_discontinued=hide)
+            return store.category_totals(level=d.level, hide_discontinued=hide)
+        if d.period == "year":
+            return store.item_totals(year=self._year(), hide_discontinued=hide)
+        return store.item_totals(hide_discontinued=hide)
 
     @property
     def native_value(self) -> int | None:
-        """Returns number of categories with spending this year."""
         store = self._rohlik_account.order_store
         if not store:
             return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
+        return len(self._entries(store))
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         store = self._rohlik_account.order_store
         if not store:
             return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
-        return {
-            "year": year,
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.yearly_enriched_count(year),
-            "total_orders": store.yearly_count(year),
-        }
+        d = self.entity_description
+        top_n = self._rohlik_account.top_n
+        entries = self._entries(store)
 
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
+        if d.kind == "category":
+            if d.period == "year":
+                year = self._year()
+                base = {
+                    "year": year,
+                    "enriched_orders": store.yearly_enriched_count(year),
+                    "total_orders": store.yearly_count(year),
+                }
+                if not entries:
+                    return base
+                return {**base, "total_count": len(entries), "categories": entries[:top_n]}
+            # all time
+            base = {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
+            if not entries:
+                return base
+            return {
+                "total_count": len(entries),
+                "categories": entries[:top_n],
+                **base,
+                "products_in_cache": store.cached_product_count,
+            }
 
-
-class CategorySpendingAllTime(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by category across all time."""
-
-    _attr_translation_key = "categories_all_time"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of categories with spending all time."""
-        store = self._rohlik_account.order_store
-        if not store:
+        # item breakdown
+        if d.period == "year":
+            year = self._year()
+            if not entries:
+                return {"year": year}
+            return {"year": year, "total_count": len(entries), "items": entries[:top_n]}
+        if not entries:
             return None
-        categories = store.category_totals(level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=1, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
         return {
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
-            "total_orders": store.alltime_count(),
+            "total_count": len(entries),
+            "items": entries[:top_n],
             "products_in_cache": store.cached_product_count,
         }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class CategorySpendingL0Yearly(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by L0 category for current year."""
-
-    _attr_translation_key = "categories_l0_this_year"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of L0 categories with spending this year."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
-        return {
-            "year": year,
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.yearly_enriched_count(year),
-            "total_orders": store.yearly_count(year),
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class CategorySpendingL0AllTime(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by L0 category across all time."""
-
-    _attr_translation_key = "categories_l0_all_time"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of L0 categories with spending all time."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=0, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
-        return {
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
-            "total_orders": store.alltime_count(),
-            "products_in_cache": store.cached_product_count,
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class CategorySpendingL2Yearly(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by L2 category for current year."""
-
-    _attr_translation_key = "categories_l2_this_year"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of L2 categories with spending this year."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
-        return {
-            "year": year,
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.yearly_enriched_count(year),
-            "total_orders": store.yearly_count(year),
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class CategorySpendingL2AllTime(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by L2 category across all time."""
-
-    _attr_translation_key = "categories_l2_all_time"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of L2 categories with spending all time."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=2, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
-        return {
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
-            "total_orders": store.alltime_count(),
-            "products_in_cache": store.cached_product_count,
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class CategorySpendingL3Yearly(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by L3 category for current year."""
-
-    _attr_translation_key = "categories_l3_this_year"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of L3 categories with spending this year."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        categories = store.category_totals(year=year, level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"year": year, "enriched_orders": store.yearly_enriched_count(year), "total_orders": store.yearly_count(year)}
-        return {
-            "year": year,
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.yearly_enriched_count(year),
-            "total_orders": store.yearly_count(year),
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class CategorySpendingL3AllTime(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by L3 category across all time."""
-
-    _attr_translation_key = "categories_l3_all_time"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of L3 categories with spending all time."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(categories)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        categories = store.category_totals(level=3, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not categories:
-            return {"enriched_orders": store.enriched_count, "total_orders": store.alltime_count()}
-        return {
-            "total_count": len(categories),
-            "categories": categories[:self._rohlik_account.top_n],
-            "enriched_orders": store.enriched_count,
-            "total_orders": store.alltime_count(),
-            "products_in_cache": store.cached_product_count,
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class ItemSpendingYearly(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by individual item for current year."""
-
-    _attr_translation_key = "items_this_year"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of unique items purchased this year."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        items = store.item_totals(year=year, hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(items)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
-        items = store.item_totals(year=year, hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not items:
-            return {"year": year}
-        return {
-            "year": year,
-            "total_count": len(items),
-            "items": items[:self._rohlik_account.top_n],
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
-
-
-class ItemSpendingAllTime(BaseEntity, SensorEntity):
-    """Sensor for spending breakdown by individual item across all time."""
-
-    _attr_translation_key = "items_all_time"
-    _attr_should_poll = False
-
-    @property
-    def native_value(self) -> int | None:
-        """Returns number of unique items purchased all time."""
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        items = store.item_totals(hide_discontinued=self._rohlik_account.hide_discontinued)
-        return len(items)
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        store = self._rohlik_account.order_store
-        if not store:
-            return None
-        items = store.item_totals(hide_discontinued=self._rohlik_account.hide_discontinued)
-        if not items:
-            return None
-        return {
-            "total_count": len(items),
-            "items": items[:self._rohlik_account.top_n],
-            "products_in_cache": store.cached_product_count,
-        }
-
-    @property
-    def icon(self) -> str:
-        return ICON_CATEGORY_SPENDING
 
 
 class NoLimitOrders(BaseEntity, SensorEntity):

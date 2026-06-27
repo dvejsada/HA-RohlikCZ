@@ -175,6 +175,54 @@ async def test_monthly_spent_sums_current_month(hass: HomeAssistant) -> None:
     assert hass.states.get(spent_id).state == "500.0"
 
 
+async def test_spending_breakdown_sensors_registered(hass: HomeAssistant, hass_storage) -> None:
+    """All category/item spending sensors register with their stable unique_ids."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="123456",
+        data=ENTRY_DATA,
+        options={
+            CONF_ANALYTICS: [
+                "categories_l0",
+                "categories_l1",
+                "categories_l2",
+                "categories_l3",
+                "per_item",
+            ]
+        },
+    )
+    entry.add_to_hass(hass)
+
+    no_network = {
+        "fetch_all_delivered_orders": AsyncMock(return_value=[]),
+        "enrich_orders_with_items": AsyncMock(return_value={}),
+        "fetch_product_categories_batch": AsyncMock(return_value={}),
+    }
+    with _patch_get_data(return_value=sample_api_data()), patch.multiple(
+        "custom_components.rohlikcz.rohlik_api.RohlikCZAPI", **no_network
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    expected = [
+        "categories_l0_this_year", "categories_l0_all_time",
+        "categories_this_year", "categories_all_time",
+        "categories_l2_this_year", "categories_l2_all_time",
+        "categories_l3_this_year", "categories_l3_all_time",
+        "items_this_year", "items_all_time",
+    ]
+    for key in expected:
+        assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"123456_{key}") is not None, key
+
+    # The generic sensor reports 0 distinct categories on an unenriched store,
+    # with the empty-case attributes present.
+    eid = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_categories_all_time")
+    state = hass.states.get(eid)
+    assert state.state == "0"
+    assert "enriched_orders" in state.attributes
+
+
 async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp_path) -> None:
     """Auto-enrichment fetches items + categories and persists them.
 
