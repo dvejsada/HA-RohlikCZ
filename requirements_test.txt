@@ -1,2 +1,3 @@
 pytest-homeassistant-custom-component
 aioresponses
+rohlik-api==0.1.0
