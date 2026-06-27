@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .const import DOMAIN
 from .errors import InvalidCredentialsError, APIRequestFailedError, RohlikczError
@@ -53,64 +54,84 @@ _NOTIFICATIONS = {
 }
 
 
-class OrderStore:
-    """Persistent storage for order history in HA's .storage directory."""
+#: Storage schema version for the order store.
+STORE_VERSION = 3
 
-    def __init__(self, storage_dir: str, user_id: str, hass: HomeAssistant):
-        self._path = os.path.join(storage_dir, f"rohlikcz_{user_id}_orders.json")
-        self._data = {"version": 3, "user_id": user_id, "tracking_since": None, "backfill_complete": False, "orders": {}, "product_categories": {}}
+
+class OrderStore:
+    """Persistent storage for order history backed by Home Assistant's Store helper."""
+
+    def __init__(self, hass: HomeAssistant, user_id: str):
         self._hass = hass
+        self._user_id = user_id
+        self._key = f"rohlikcz_{user_id}_orders"
+        self._store: Store[dict] = Store(hass, STORE_VERSION, self._key)
+        # Path of the pre-Store implementation, imported once if present.
+        self._legacy_path = hass.config.path(".storage", f"{self._key}.json")
+        self._data = self._default_data(user_id)
+
+    @staticmethod
+    def _default_data(user_id: str) -> dict:
+        return {"version": STORE_VERSION, "user_id": user_id, "tracking_since": None,
+                "backfill_complete": False, "orders": {}, "product_categories": {}}
 
     @classmethod
-    async def async_create(cls, storage_dir: str, user_id: str, hass: HomeAssistant) -> "OrderStore":
+    async def async_create(cls, hass: HomeAssistant, user_id: str) -> "OrderStore":
         """Create and load an OrderStore asynchronously."""
-        store = cls(storage_dir, user_id, hass)
-        await hass.async_add_executor_job(store._load_sync)
+        store = cls(hass, user_id)
+        await store._async_load()
         return store
 
-    def _load_sync(self) -> None:
-        """Load order store from disk (blocking, run in executor)."""
-        if os.path.exists(self._path):
-            try:
-                with open(self._path, "r") as f:
-                    self._data = json.load(f)
-                migrated = False
-                # Migrate v1 → v2
-                if self._data.get("version", 1) < 2:
-                    self._data["version"] = 2
-                    if "product_categories" not in self._data:
-                        self._data["product_categories"] = {}
-                    migrated = True
-                    _LOGGER.info("Migrated order store from v1 to v2")
-                elif "product_categories" not in self._data:
-                    self._data["product_categories"] = {}
-                # Migrate v2 → v3 (add backfill_complete flag)
-                if self._data.get("version", 1) < 3:
-                    self._data["version"] = 3
-                    # Existing stores with tracking_since already set had a
-                    # successful backfill in a prior run; mark it complete so
-                    # we don't re-download everything on next restart.
-                    if "backfill_complete" not in self._data:
-                        self._data["backfill_complete"] = self._data.get("tracking_since") is not None
-                    migrated = True
-                    _LOGGER.info("Migrated order store from v2 to v3")
-                if migrated:
-                    self._save_sync()
-            except (json.JSONDecodeError, OSError) as err:
-                _LOGGER.error(f"Failed to load order store: {err}")
+    async def _async_load(self) -> None:
+        """Load from Store, importing the legacy JSON file on first run."""
+        data = await self._store.async_load()
+        if data is not None:
+            self._data = data
+            return
 
-    def _save_sync(self) -> None:
-        """Save order store to disk (blocking, run in executor)."""
+        # No Store data yet: import the legacy file if one exists.
+        legacy = await self._hass.async_add_executor_job(self._load_legacy_sync)
+        if legacy is not None:
+            self._data = self._migrate_legacy(legacy, self._user_id)
+            await self._store.async_save(self._data)
+            await self._hass.async_add_executor_job(self._remove_legacy_sync)
+            _LOGGER.info("Imported legacy order store for user %s into HA storage", self._user_id)
+
+    def _load_legacy_sync(self) -> dict | None:
+        """Read the legacy JSON file (blocking, run in executor)."""
+        if not os.path.exists(self._legacy_path):
+            return None
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True)
-            with open(self._path, "w") as f:
-                json.dump(self._data, f, indent=2)
+            with open(self._legacy_path, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as err:
+            _LOGGER.error("Failed to load legacy order store: %s", err)
+            return None
+
+    def _remove_legacy_sync(self) -> None:
+        """Delete the legacy JSON file after a successful import."""
+        try:
+            os.remove(self._legacy_path)
         except OSError as err:
-            _LOGGER.error(f"Failed to save order store: {err}")
+            _LOGGER.warning("Could not remove legacy order store file %s: %s", self._legacy_path, err)
+
+    @staticmethod
+    def _migrate_legacy(data: dict, user_id: str = "") -> dict:
+        """Bring imported legacy data up to the current schema (v1/v2 -> v3)."""
+        if not isinstance(data, dict):
+            return OrderStore._default_data(user_id)
+        data = dict(data)  # avoid mutating the caller's dict
+        data.setdefault("orders", {})
+        data.setdefault("product_categories", {})
+        if "backfill_complete" not in data:
+            # A store that already had a tracking_since had completed backfill.
+            data["backfill_complete"] = data.get("tracking_since") is not None
+        data["version"] = STORE_VERSION
+        return data
 
     async def async_save(self) -> None:
-        """Save order store to disk asynchronously."""
-        await self._hass.async_add_executor_job(self._save_sync)
+        """Persist the order store asynchronously."""
+        await self._store.async_save(self._data)
 
     def process_orders(self, orders: list) -> int:
         """Process a list of order dicts from the API. Returns count of new orders added.
@@ -453,8 +474,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         # Initialize order store on first update (only if analytics enabled)
         if self._analytics and not self._order_store and data.get("login"):
             user_id = str(data["login"]["data"]["user"]["id"])
-            storage_dir = self.hass.config.path(".storage")
-            self._order_store = await OrderStore.async_create(storage_dir, user_id, self.hass)
+            self._order_store = await OrderStore.async_create(self.hass, user_id)
 
         # Process delivered orders into persistent store and auto-enrich new ones
         if self._analytics and self._order_store and data.get("delivered_orders"):
