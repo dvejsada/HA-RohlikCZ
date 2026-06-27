@@ -177,6 +177,105 @@ async def test_monthly_spent_sums_current_month(hass: HomeAssistant) -> None:
     assert hass.states.get(spent_id).state == "500.0"
 
 
+async def test_slot_sensors_registered(hass: HomeAssistant) -> None:
+    """The three preselected-slot sensors register and parse their data."""
+    data = sample_api_data()
+    data["next_delivery_slot"] = {
+        "data": {
+            "preselectedSlots": [
+                {
+                    "type": "EXPRESS",
+                    "price": 49,
+                    "title": "Express",
+                    "subtitle": "soon",
+                    "slot": {
+                        "interval": {"since": "2026-06-28T08:00:00+02:00", "till": "2026-06-28T10:00:00+02:00"},
+                        "timeSlotCapacityDTO": {"totalFreeCapacityPercent": 50, "capacityMessage": "ok"},
+                    },
+                },
+                {
+                    "type": "FIRST",
+                    "slot": {"interval": {"since": "2026-06-28T12:00:00+02:00", "till": "2026-06-28T14:00:00+02:00"}, "timeSlotCapacityDTO": {}},
+                },
+                {
+                    "type": "ECO",
+                    "slot": {"interval": {"since": "2026-06-28T16:00:00+02:00", "till": "2026-06-28T18:00:00+02:00"}, "timeSlotCapacityDTO": {}},
+                },
+            ]
+        }
+    }
+
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with _patch_get_data(return_value=data):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    for key in ("express_slot", "standard_slot", "eco_slot"):
+        assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"123456_{key}") is not None, key
+
+    # The express slot's data flows to state + attributes.
+    eid = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_express_slot")
+    state = hass.states.get(eid)
+    assert state.state not in (None, "unknown", "unavailable")
+    assert state.attributes.get("Remaining Capacity Percent") == 50
+
+
+async def test_spending_breakdown_sensors_registered(hass: HomeAssistant, hass_storage) -> None:
+    """All category/item spending sensors register with their stable unique_ids."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="123456",
+        data=ENTRY_DATA,
+        options={
+            CONF_ANALYTICS: [
+                "categories_l0",
+                "categories_l1",
+                "categories_l2",
+                "categories_l3",
+                "per_item",
+            ]
+        },
+    )
+    entry.add_to_hass(hass)
+
+    no_network = {
+        "fetch_all_delivered_orders": AsyncMock(return_value=[]),
+        "enrich_orders_with_items": AsyncMock(return_value={}),
+        "fetch_product_categories_batch": AsyncMock(return_value={}),
+    }
+    with _patch_get_data(return_value=sample_api_data()), patch.multiple(
+        "custom_components.rohlikcz.rohlik_api.RohlikCZAPI", **no_network
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    expected = [
+        "categories_l0_this_year", "categories_l0_all_time",
+        "categories_this_year", "categories_all_time",
+        "categories_l2_this_year", "categories_l2_all_time",
+        "categories_l3_this_year", "categories_l3_all_time",
+        "items_this_year", "items_all_time",
+    ]
+    for key in expected:
+        assert ent_reg.async_get_entity_id("sensor", DOMAIN, f"123456_{key}") is not None, key
+
+    # The generic sensor reports 0 distinct categories on an unenriched store,
+    # with the empty-case attributes present.
+    eid = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_categories_all_time")
+    state = hass.states.get(eid)
+    assert state.state == "0"
+    assert "enriched_orders" in state.attributes
+
+    # items_all_time returns no attributes at all on an empty store.
+    eid_items = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_items_all_time")
+    state_items = hass.states.get(eid_items)
+    assert state_items.state == "0"
+    assert state_items.attributes.get("items") is None
+
+
 async def test_order_store_imports_legacy_file(hass: HomeAssistant, hass_storage) -> None:
     """A pre-Store JSON file is imported once into Store and then removed."""
     storage_dir = hass.config.path(".storage")
