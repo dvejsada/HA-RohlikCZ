@@ -20,7 +20,7 @@ from .const import (
     DOMAIN, CONF_ANALYTICS, ANALYTICS_OPTIONS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
 )
-from rohlik_api import InvalidCredentialsError, RohlikAPI
+from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +81,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, user_input)
             except InvalidCredentialsError:
                 errors["base"] = "invalid_auth"
+            except RohlikAPIError:
+                errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unknown exception")
                 errors["base"] = "unknown"
@@ -142,6 +144,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, data)
             except InvalidCredentialsError:
                 errors["base"] = "invalid_auth"
+            except RohlikAPIError:
+                errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unknown exception")
                 errors["base"] = "unknown"

@@ -5,7 +5,7 @@ import logging
 import os
 from dataclasses import asdict
 from datetime import datetime, timedelta
-from typing import Any, Optional, Dict
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
@@ -732,7 +732,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                 results[pid] = [{"level": 1, "name": "Discontinued"}]
             elif cats:
                 results[pid] = cats
-            if progress_callback and i % 50 == 0:
+            if progress_callback and i and i % 50 == 0:
                 await progress_callback(i, total)
             await asyncio.sleep(0.2)
         _LOGGER.info("Category fetch complete: %d/%d products", len(results), total)
@@ -753,13 +753,16 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
 
     async def async_close(self) -> None:
         """Release resources held by the API client (called on unload)."""
-        # Logs out (best-effort) but leaves the injected session open...
-        await self._client.close()
-        # ...so close the HA-managed session we created for this account.
-        await self._session.close()
+        try:
+            # Logs out (best-effort) but leaves the injected session open...
+            await self._client.close()
+        finally:
+            # ...so always close the HA-managed session we created here, even
+            # if logout/close raised.
+            await self._session.close()
 
     # New service methods
-    async def add_to_cart(self, product_id: int, quantity: int) -> Dict:
+    async def add_to_cart(self, product_id: int, quantity: int) -> dict:
         """Add a product to the shopping cart."""
         added = await self._client.cart.add_items(
             [{"product_id": product_id, "quantity": quantity}]
@@ -779,7 +782,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         """Retrieve cart content. Returns a Cart model."""
         return await self._client.cart.get_content()
 
-    async def search_and_add(self, product_name: str, quantity: int, favourite: bool = False) -> Dict | None:
+    async def search_and_add(self, product_name: str, quantity: int, favourite: bool = False) -> dict | None:
         """Search for a product by name and add the top match to the cart."""
         results = await self.search_product(product_name, limit=5, favourite=favourite)
 

@@ -31,7 +31,7 @@ def sample_api_data() -> dict:
             "delivery": {"data": {}},
             "next_order": [],
             "announcements": {"data": {"announcements": []}},
-            "bags": {"data": {"reusableBagsCount": 0}},
+            "bags": {"current": 0, "max": 0},
             "timeslot": None,
             "last_order": [
                 {

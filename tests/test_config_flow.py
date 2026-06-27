@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from rohlik_api import InvalidCredentialsError
+from rohlik_api import InvalidCredentialsError, RohlikAPIError
 
 from custom_components.rohlikcz.const import DOMAIN
 
@@ -57,6 +57,22 @@ async def test_user_flow_invalid_auth(hass: HomeAssistant) -> None:
         )
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_user_flow_cannot_connect(hass: HomeAssistant) -> None:
+    """A network/API error surfaces a cannot_connect error on the form."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with patch(
+        "custom_components.rohlikcz.config_flow.validate_input",
+        side_effect=RohlikAPIError("rohlik down"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], USER_INPUT
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
 
 
 async def test_user_flow_unknown_error(hass: HomeAssistant) -> None:
