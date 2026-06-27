@@ -37,7 +37,7 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
     """A Rohlik Shopping Cart TodoListEntity."""
 
     _attr_has_entity_name = True
-    _attr_supported_features = (TodoListEntityFeature.CREATE_TODO_ITEM | TodoListEntityFeature.DELETE_TODO_ITEM | TodoListEntityFeature.UPDATE_TODO_ITEM)
+    _attr_supported_features = (TodoListEntityFeature.CREATE_TODO_ITEM | TodoListEntityFeature.DELETE_TODO_ITEM)
     _attr_translation_key = "shopping_cart"
     _attr_icon = ICON_CART
 
@@ -122,10 +122,3 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
                 _LOGGER.debug("Deleted item: %s", uid)
             except Exception as err:
                 _LOGGER.error("Error deleting item %s: %s", uid, err)
-
-
-    async def async_update_todo_item(self, item: TodoItem) -> None:
-        """Update an item to the To-do list."""
-        pass
-
-

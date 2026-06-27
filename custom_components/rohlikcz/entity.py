@@ -26,4 +26,4 @@ class BaseEntity(CoordinatorEntity[RohlikAccount]):
 
         self._rohlik_account = rohlik_account
         self._attr_device_info = rohlik_account.device_info
-        self._attr_unique_id = f"{rohlik_account.data['login']['data']['user']['id']}_{self.translation_key}"
+        self._attr_unique_id = f"{rohlik_account.unique_id}_{self.translation_key}"

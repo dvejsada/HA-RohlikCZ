@@ -464,7 +464,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                     await self._order_store.async_save()
             if new > 0:
                 # Schedule enrichment in background (don't block update cycle / setup)
-                self.hass.async_create_task(self._auto_enrich_new_orders(new))
+                self.config_entry.async_create_background_task(
+                    self.hass, self._auto_enrich_new_orders(new), "rohlik_auto_enrich"
+                )
 
         return data
 
