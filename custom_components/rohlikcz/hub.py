@@ -672,6 +672,23 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             "products_categorized_this_run": stats["products_categorized"],
         }
 
+    async def refresh_slots(self) -> None:
+        """Cheaply refresh only the delivery-slot data (for express-slot polling).
+
+        Updates self.data["next_delivery_slot"] in place and notifies entities,
+        without disturbing the rest of the data or the regular refresh cycle.
+        """
+        if not self.data:
+            return
+        result = await self._rohlik_api.get_timeslots()
+        if result is not None:
+            self.data["next_delivery_slot"] = result
+            self.async_update_listeners()
+
+    async def async_close(self) -> None:
+        """Release resources held by the API client (called on unload)."""
+        await self._rohlik_api.async_close()
+
     # New service methods
     async def add_to_cart(self, product_id: int, quantity: int) -> Dict:
         """Add a product to the shopping cart."""

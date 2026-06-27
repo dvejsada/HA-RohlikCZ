@@ -1,0 +1,35 @@
+alias: Notify when Rohlik express delivery becomes available
+description: >-
+  While an "express alert" toggle is on, poll the lightweight refresh_slots
+  action every 15 seconds so the express-available binary sensor updates within
+  seconds, and push a notification the moment express becomes available.
+mode: single
+triggers:
+  # Poll while the alert is armed.
+  - trigger: time_pattern
+    seconds: "/15"
+conditions:
+  # Replace with your own input_boolean used to arm the alert.
+  - condition: state
+    entity_id: input_boolean.rohlik_express_alert
+    state: "on"
+actions:
+  - action: rohlikcz.refresh_slots
+    data:
+      config_entry_id: XXXXXXXXXXXXXXXX # Replace with your Rohlik.cz config entry ID
+  # Give the sensor a moment to update after the refresh.
+  - delay:
+      seconds: 1
+  - if:
+      - condition: state
+        entity_id: binary_sensor.rohlik_cz_express_available # Replace with your express sensor
+        state: "on"
+    then:
+      - action: notify.mobile_app_your_phone # Replace with your notify target
+        data:
+          title: Rohlík express available
+          message: Express delivery is available now — grab a slot!
+      # Disarm so we stop polling until you re-arm it.
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.rohlik_express_alert

@@ -106,4 +106,7 @@ async def _async_reload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> 
 
 async def async_unload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        await entry.runtime_data.async_close()
+    return unload_ok

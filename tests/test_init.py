@@ -177,6 +177,37 @@ async def test_monthly_spent_sums_current_month(hass: HomeAssistant) -> None:
     assert hass.states.get(spent_id).state == "500.0"
 
 
+async def test_refresh_slots_updates_express_sensor(hass: HomeAssistant) -> None:
+    """refresh_slots merges fresh slot data and the express sensor reflects it."""
+    data = sample_api_data()
+    data["next_delivery_slot"] = None  # express unavailable initially
+
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with _patch_get_data(return_value=data):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    express_id = ent_reg.async_get_entity_id(
+        "binary_sensor", DOMAIN, "123456_is_express_available"
+    )
+    assert hass.states.get(express_id).state == "off"
+
+    account = entry.runtime_data
+    fresh_slots = {"data": {"expressSlot": {"timeSlotCapacityDTO": {"totalFreeCapacityPercent": 80}}}}
+    account._rohlik_api.get_timeslots = AsyncMock(return_value=fresh_slots)
+
+    await account.refresh_slots()
+    await hass.async_block_till_done()
+
+    # Only the slot data changed; the express sensor flips to available.
+    assert account.data["next_delivery_slot"] == fresh_slots
+    assert hass.states.get(express_id).state == "on"
+    # Other data is untouched.
+    assert account.data["login"]["data"]["user"]["id"] == 123456
+
+
 async def test_slot_sensors_registered(hass: HomeAssistant) -> None:
     """The three preselected-slot sensors register and parse their data."""
     data = sample_api_data()
