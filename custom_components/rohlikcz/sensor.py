@@ -64,9 +64,7 @@ async def async_setup_entry(
             entities.extend(SpendingBreakdownSensor(rohlik_hub, d) for d in descriptions)
 
     if rohlik_hub.has_address:
-        entities.append(FirstExpressSlot(rohlik_hub))
-        entities.append(FirstStandardSlot(rohlik_hub))
-        entities.append(FirstEcoSlot(rohlik_hub))
+        entities.extend(FirstSlotSensor(rohlik_hub, d) for d in SLOT_DESCRIPTIONS)
 
     # Only add premium days remaining if the user is premium
     if (rohlik_hub.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}).get('active', False):
@@ -228,137 +226,70 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                     )
 
 
-class FirstExpressSlot(BaseEntity, SensorEntity):
-    """Sensor for first available delivery."""
+@dataclass(frozen=True, kw_only=True)
+class SlotSensorDescription(SensorEntityDescription):
+    """Describes a 'first available slot' sensor for a given slot type."""
 
-    _attr_translation_key = "express_slot"
+    slot_type: str
+    picture: str
+
+
+#: One description per preselected delivery-slot type.
+SLOT_DESCRIPTIONS: tuple[SlotSensorDescription, ...] = (
+    SlotSensorDescription(key="express_slot", slot_type="EXPRESS",
+                          picture="https://cdn.rohlik.cz/images/icons/preselected-slots/express.png"),
+    SlotSensorDescription(key="standard_slot", slot_type="FIRST",
+                          picture="https://cdn.rohlik.cz/images/icons/preselected-slots/first.png"),
+    SlotSensorDescription(key="eco_slot", slot_type="ECO",
+                          picture="https://cdn.rohlik.cz/images/icons/preselected-slots/eco.png"),
+)
+
+
+class FirstSlotSensor(BaseEntity, SensorEntity):
+    """First available delivery slot of a given type (express / standard / eco)."""
+
+    entity_description: SlotSensorDescription
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
+    def __init__(self, rohlik_account: RohlikAccount, description: SlotSensorDescription) -> None:
+        self.entity_description = description
+        super().__init__(rohlik_account)
+
+    def _slot(self) -> dict | None:
+        preselected = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get("data") or {}).get("preselectedSlots", [])
+        for slot in preselected:
+            if slot.get("type", "") == self.entity_description.slot_type:
+                return slot
+        return None
+
     @property
     def native_value(self) -> datetime | None:
-        """Returns datetime of the express slot."""
-        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
-        state = None
-        for slot in preselected_slots:
-            if slot.get("type", "") == "EXPRESS":
-                state = datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None),
-                                          "%Y-%m-%dT%H:%M:%S%z")
-                break
-        return state
+        """Returns datetime of the slot start."""
+        slot = self._slot()
+        if not slot:
+            return None
+        return datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None), "%Y-%m-%dT%H:%M:%S%z")
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns extra state attributes."""
-        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
-        extra_attrs = None
-        for slot in preselected_slots:
-            if slot.get("type", "") == "EXPRESS":
-                extra_attrs = {
-                    "Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None),
-                                                           "%Y-%m-%dT%H:%M:%S%z"),
-                    "Remaining Capacity Percent": int(
-                        slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)),
-                    "Remaining Capacity Message": slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get(
-                        "capacityMessage", None),
-                    "Price": int(slot.get("price", 0)),
-                    "Title": slot.get("title", None),
-                    "Subtitle": slot.get("subtitle", None)
-                }
-                break
-
-        return extra_attrs
+        slot = self._slot()
+        if not slot:
+            return None
+        capacity = slot.get("slot", {}).get("timeSlotCapacityDTO", {})
+        return {
+            "Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None), "%Y-%m-%dT%H:%M:%S%z"),
+            "Remaining Capacity Percent": int(capacity.get("totalFreeCapacityPercent", 0)),
+            "Remaining Capacity Message": capacity.get("capacityMessage", None),
+            "Price": int(slot.get("price", 0)),
+            "Title": slot.get("title", None),
+            "Subtitle": slot.get("subtitle", None),
+        }
 
     @property
     def entity_picture(self) -> str | None:
-        return  "https://cdn.rohlik.cz/images/icons/preselected-slots/express.png"
-
-
-class FirstStandardSlot(BaseEntity, SensorEntity):
-    """Sensor for first available delivery."""
-
-    _attr_translation_key = "standard_slot"
-    _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-
-    @property
-    def native_value(self) -> datetime | None:
-        """Returns datetime of the standard slot."""
-        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
-        state = None
-        for slot in preselected_slots:
-            if slot.get("type", "") == "FIRST":
-                state = datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None),
-                                          "%Y-%m-%dT%H:%M:%S%z")
-                break
-        return state
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """Returns extra state attributes."""
-        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
-        extra_attrs = None
-        for slot in preselected_slots:
-            if slot.get("type", "") == "FIRST":
-                extra_attrs = {
-                    "Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None),
-                                                           "%Y-%m-%dT%H:%M:%S%z"),
-                    "Remaining Capacity Percent": int(
-                        slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)),
-                    "Remaining Capacity Message": slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get(
-                        "capacityMessage", None),
-                    "Price": int(slot.get("price", 0)),
-                    "Title": slot.get("title", None),
-                    "Subtitle": slot.get("subtitle", None)
-                    }
-                break
-
-        return extra_attrs
-
-    @property
-    def entity_picture(self) -> str | None:
-        return  "https://cdn.rohlik.cz/images/icons/preselected-slots/first.png"
-
-
-class FirstEcoSlot(BaseEntity, SensorEntity):
-    """Sensor for first available delivery."""
-
-    _attr_translation_key = "eco_slot"
-    _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-
-    @property
-    def native_value(self) -> datetime | None:
-        """Returns datetime of the eco slot."""
-        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
-        state = None
-        for slot in preselected_slots:
-            if slot.get("type", "") == "ECO":
-                state = datetime.strptime(slot.get("slot", {}).get("interval", {}).get("since", None), "%Y-%m-%dT%H:%M:%S%z")
-                break
-        return state
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """Returns extra state attributes."""
-        preselected_slots = ((self._rohlik_account.data.get("next_delivery_slot") or {}).get('data') or {}).get('preselectedSlots', [])
-        extra_attrs = None
-        for slot in preselected_slots:
-            if slot.get("type", "") == "ECO":
-                extra_attrs = {"Delivery Slot End": datetime.strptime(slot.get("slot", {}).get("interval", {}).get("till", None), "%Y-%m-%dT%H:%M:%S%z"),
-                    "Remaining Capacity Percent": int(slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("totalFreeCapacityPercent", 0)),
-                    "Remaining Capacity Message": slot.get("slot", {}).get("timeSlotCapacityDTO", {}).get("capacityMessage", None),
-                    "Price": int(slot.get("price", 0)),
-                    "Title": slot.get("title", None),
-                    "Subtitle": slot.get("subtitle", None)
-                    }
-                break
-
-        return extra_attrs
-
-    @property
-    def entity_picture(self) -> str | None:
-        return  "https://cdn.rohlik.cz/images/icons/preselected-slots/eco.png"
+        return self.entity_description.picture
 
 
 class FirstDeliverySensor(BaseEntity, SensorEntity):
