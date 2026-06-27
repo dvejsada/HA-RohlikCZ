@@ -222,6 +222,12 @@ async def test_spending_breakdown_sensors_registered(hass: HomeAssistant, hass_s
     assert state.state == "0"
     assert "enriched_orders" in state.attributes
 
+    # items_all_time returns no attributes at all on an empty store.
+    eid_items = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_items_all_time")
+    state_items = hass.states.get(eid_items)
+    assert state_items.state == "0"
+    assert state_items.attributes.get("items") is None
+
 
 async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp_path) -> None:
     """Auto-enrichment fetches items + categories and persists them.

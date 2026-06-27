@@ -6,7 +6,7 @@ import re
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass, SensorEntityDescription
@@ -20,7 +20,7 @@ from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EX
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
     ICON_CATEGORY_SPENDING
 from .entity import BaseEntity
-from .hub import RohlikAccount
+from .hub import OrderStore, RohlikAccount
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
 
 _LOGGER = logging.getLogger(__name__)
@@ -686,8 +686,8 @@ class AllTimeSpent(BaseEntity, SensorEntity):
 class SpendingBreakdownDescription(SensorEntityDescription):
     """Describes a category/item spending-breakdown sensor."""
 
-    kind: str           # "category" or "item"
-    period: str         # "year" or "alltime"
+    kind: Literal["category", "item"]
+    period: Literal["year", "alltime"]
     level: int | None = None
 
 
@@ -735,15 +735,15 @@ class SpendingBreakdownSensor(BaseEntity, SensorEntity):
     def _year() -> str:
         return datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
 
-    def _entries(self, store) -> list:
+    def _entries(self, store: OrderStore, year: str) -> list:
         d = self.entity_description
         hide = self._rohlik_account.hide_discontinued
         if d.kind == "category":
             if d.period == "year":
-                return store.category_totals(year=self._year(), level=d.level, hide_discontinued=hide)
+                return store.category_totals(year=year, level=d.level, hide_discontinued=hide)
             return store.category_totals(level=d.level, hide_discontinued=hide)
         if d.period == "year":
-            return store.item_totals(year=self._year(), hide_discontinued=hide)
+            return store.item_totals(year=year, hide_discontinued=hide)
         return store.item_totals(hide_discontinued=hide)
 
     @property
@@ -751,7 +751,7 @@ class SpendingBreakdownSensor(BaseEntity, SensorEntity):
         store = self._rohlik_account.order_store
         if not store:
             return None
-        return len(self._entries(store))
+        return len(self._entries(store, self._year()))
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
@@ -760,11 +760,11 @@ class SpendingBreakdownSensor(BaseEntity, SensorEntity):
             return None
         d = self.entity_description
         top_n = self._rohlik_account.top_n
-        entries = self._entries(store)
+        year = self._year()
+        entries = self._entries(store, year)
 
         if d.kind == "category":
             if d.period == "year":
-                year = self._year()
                 base = {
                     "year": year,
                     "enriched_orders": store.yearly_enriched_count(year),
@@ -786,7 +786,6 @@ class SpendingBreakdownSensor(BaseEntity, SensorEntity):
 
         # item breakdown
         if d.period == "year":
-            year = self._year()
             if not entries:
                 return {"year": year}
             return {"year": year, "total_count": len(entries), "items": entries[:top_n]}
