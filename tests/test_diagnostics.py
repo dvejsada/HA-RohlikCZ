@@ -25,7 +25,7 @@ async def test_diagnostics_redacts_personal_data(hass: HomeAssistant) -> None:
     entry.add_to_hass(hass)
 
     with patch(
-        "custom_components.rohlikcz.rohlik_api.RohlikCZAPI.get_data",
+        "custom_components.rohlikcz.hub.RohlikAPI.get_data",
         new=AsyncMock(return_value=sample_api_data()),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)

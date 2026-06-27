@@ -827,16 +827,17 @@ class CartPriceSensor(BaseEntity, SensorEntity):
     @property
     def native_value(self) -> float:
         """Returns total cart price."""
-        return (self._rohlik_account.data.get('cart') or {}).get('total_price', 0.0)
+        cart = self._rohlik_account.data.get('cart')
+        return cart.total_price if cart else 0.0
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Returns cart details."""
-        cart_data = self._rohlik_account.data.get('cart') or {}
-        if cart_data:
+        cart = self._rohlik_account.data.get('cart')
+        if cart:
             return {
-                "Total items": cart_data.get('total_items', 0),
-                "Can Order": cart_data.get('can_make_order', False)
+                "Total items": cart.total_items,
+                "Can Order": cart.can_make_order,
             }
         return None
 

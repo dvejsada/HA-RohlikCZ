@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Any, Optional, Dict
 from zoneinfo import ZoneInfo
@@ -10,12 +11,13 @@ from zoneinfo import ZoneInfo
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
+
 from .const import DOMAIN
-from .errors import InvalidCredentialsError, APIRequestFailedError, RohlikczError
-from .rohlik_api import RohlikCZAPI
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)
@@ -391,7 +393,12 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         )
         self._username: str = username
         self._password: str = password
-        self._rohlik_api = RohlikCZAPI(self._username, self._password)
+        # A dedicated, HA-managed aiohttp session (own cookie jar) keeps each
+        # account's auth cookies isolated from other integrations and from a
+        # second Rohlik account. The client logs in lazily and re-authenticates
+        # transparently on a 401, reusing this session across calls.
+        self._session = async_create_clientsession(hass)
+        self._client = RohlikAPI(self._username, self._password, session=self._session)
         self._order_store: OrderStore | None = None
         self._last_refresh: datetime | None = None
         # _store_lock guards brief in-memory store mutations (contended by the
@@ -462,11 +469,11 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     async def _async_update_data(self) -> dict:
         """Fetch data from the Rohlik API (called by the coordinator)."""
         try:
-            data = await self._rohlik_api.get_data()
+            data = await self._client.get_data()
         except InvalidCredentialsError as err:
             # Credentials are no longer valid - trigger the reauth flow.
             raise ConfigEntryAuthFailed(str(err)) from err
-        except (APIRequestFailedError, RohlikczError) as err:
+        except RohlikAPIError as err:
             raise UpdateFailed(str(err)) from err
 
         self._last_refresh = datetime.now(ZoneInfo("Europe/Prague"))
@@ -512,7 +519,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                     return
 
                 # Fetch item details (network I/O, store lock released).
-                items_map = await self._rohlik_api.enrich_orders_with_items(recent_unenriched)
+                items_map = await self._fetch_order_items(recent_unenriched)
 
                 # Apply item results and find products needing categories.
                 async with self._store_lock:
@@ -523,7 +530,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                 # Fetch categories (network I/O, store lock released).
                 cat_map = {}
                 if uncategorized:
-                    cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized)
+                    cat_map = await self._fetch_product_categories(uncategorized)
 
                 # Persist all results.
                 enriched = False
@@ -547,7 +554,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         """
         async with self._enrich_lock:
             # Step 1: Fetch order list (network I/O, store lock released)
-            all_orders = await self._rohlik_api.fetch_all_delivered_orders()
+            all_orders = await self._client.orders.get_all_delivered()
             new_orders = 0
             if self._order_store and all_orders:
                 async with self._store_lock:
@@ -615,7 +622,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                 self._t("phase1").format(count=len(unenriched)),
                 self._t("title_progress"))
             _LOGGER.info(f"Enriching {len(unenriched)} orders with item details...")
-            items_map = await self._rohlik_api.enrich_orders_with_items(unenriched)
+            items_map = await self._fetch_order_items(unenriched)
             async with self._store_lock:
                 for order_id, items in items_map.items():
                     if self._order_store.add_items_to_order(order_id, items):
@@ -642,7 +649,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                     self._t("title_progress"))
 
             _LOGGER.info(f"Fetching categories for {total_products} products...")
-            cat_map = await self._rohlik_api.fetch_product_categories_batch(uncategorized, progress_callback=progress_cb)
+            cat_map = await self._fetch_product_categories(uncategorized, progress_callback=progress_cb)
             async with self._store_lock:
                 new_cats = self._order_store.update_product_categories(cat_map)
                 stats["products_categorized"] = new_cats
@@ -672,6 +679,65 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             "products_categorized_this_run": stats["products_categorized"],
         }
 
+    async def _fetch_order_items(self, order_ids: list[str]) -> dict[str, list]:
+        """Fetch line items for a list of order IDs.
+
+        Returns ``{order_id: items_list}`` where each item is normalised to the
+        shape the OrderStore expects. Orders are fetched one at a time with a
+        short delay to stay polite to the API.
+        """
+        results: dict[str, list] = {}
+        total = len(order_ids)
+        for i, order_id in enumerate(order_ids):
+            try:
+                detail = await self._client.orders.get_detail(int(order_id))
+            except (ValueError, RohlikAPIError) as err:
+                _LOGGER.warning("Failed to fetch items for order %s: %s", order_id, err)
+                detail = None
+            if detail and detail.get("items"):
+                results[order_id] = [
+                    {
+                        "id": item.get("id"),
+                        "name": item.get("name", "Unknown"),
+                        "quantity": item.get("amount", 1),
+                        "price": item.get("priceComposition", {}).get("total", {}).get("amount", 0),
+                        "unit_price": item.get("priceComposition", {}).get("unit", {}).get("amount", 0),
+                        "textual_amount": item.get("textualAmount", ""),
+                    }
+                    for item in detail["items"]
+                ]
+            if i and i % 50 == 0:
+                _LOGGER.info("Fetched items for %d/%d orders", i, total)
+            await asyncio.sleep(0.2)
+        _LOGGER.info("Item fetch complete: %d/%d orders", len(results), total)
+        return results
+
+    async def _fetch_product_categories(self, product_ids: list[int], progress_callback=None) -> dict[int, list]:
+        """Fetch the category hierarchy for a batch of product IDs.
+
+        Returns ``{product_id: categories_list}``. A product the API no longer
+        knows about (``get_categories`` returns ``None``) is recorded with a
+        sentinel "Discontinued" category so it isn't retried every run.
+        """
+        results: dict[int, list] = {}
+        total = len(product_ids)
+        for i, pid in enumerate(product_ids):
+            try:
+                cats = await self._client.products.get_categories(pid)
+            except RohlikAPIError as err:
+                _LOGGER.debug("Failed to fetch categories for product %s: %s", pid, err)
+                cats = []
+            if cats is None:
+                # Product discontinued (404) - mark with sentinel category.
+                results[pid] = [{"level": 1, "name": "Discontinued"}]
+            elif cats:
+                results[pid] = cats
+            if progress_callback and i % 50 == 0:
+                await progress_callback(i, total)
+            await asyncio.sleep(0.2)
+        _LOGGER.info("Category fetch complete: %d/%d products", len(results), total)
+        return results
+
     async def refresh_slots(self) -> None:
         """Cheaply refresh only the delivery-slot data (for express-slot polling).
 
@@ -680,52 +746,56 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         """
         if not self.data:
             return
-        result = await self._rohlik_api.get_timeslots()
+        result = await self._client.delivery.get_next_slots()
         if result is not None:
             self.data["next_delivery_slot"] = result
             self.async_update_listeners()
 
     async def async_close(self) -> None:
         """Release resources held by the API client (called on unload)."""
-        await self._rohlik_api.async_close()
+        # Logs out (best-effort) but leaves the injected session open...
+        await self._client.close()
+        # ...so close the HA-managed session we created for this account.
+        await self._session.close()
 
     # New service methods
     async def add_to_cart(self, product_id: int, quantity: int) -> Dict:
         """Add a product to the shopping cart."""
-        product_list = [{"product_id": product_id, "quantity": quantity}]
-        result = await self._rohlik_api.add_to_cart(product_list)
+        added = await self._client.cart.add_items(
+            [{"product_id": product_id, "quantity": quantity}]
+        )
         await self.async_update()
-        return result
+        return {"added_products": added}
 
-    async def search_product(self, product_name: str, limit: int = 10, favourite: bool = False) -> Optional[Dict[str, Any]]:
-        """Search for a product by name."""
-        result = await self._rohlik_api.search_product(product_name, limit, favourite)
-        return result
+    async def search_product(self, product_name: str, limit: int = 10, favourite: bool = False):
+        """Search for a product by name. Returns a SearchResults model (or None)."""
+        return await self._client.products.search(product_name, limit, favourite)
 
-    async def get_shopping_list(self, shopping_list_id: str) -> Dict[str, Any]:
-        """Get a shopping list by ID."""
-        result = await self._rohlik_api.get_shopping_list(shopping_list_id)
-        return result
+    async def get_shopping_list(self, shopping_list_id: str):
+        """Get a shopping list by ID. Returns a ShoppingList model."""
+        return await self._client.account.get_shopping_list(shopping_list_id)
 
-    async def get_cart_content(self) -> Dict:
-        """ Retrieves cart content. """
-        result = await self._rohlik_api.get_cart_content()
-        return result
+    async def get_cart_content(self):
+        """Retrieve cart content. Returns a Cart model."""
+        return await self._client.cart.get_content()
 
     async def search_and_add(self, product_name: str, quantity: int, favourite: bool = False) -> Dict | None:
-        """ Searches for product by name and adds to cart"""
+        """Search for a product by name and add the top match to the cart."""
+        results = await self.search_product(product_name, limit=5, favourite=favourite)
 
-        searched_product = await self.search_product(product_name, limit = 5, favourite=favourite)
+        if results and results.results:
+            first = results.results[0]
+            await self.add_to_cart(first.id, quantity)
+            return {"success": True, "message": "", "added_to_cart": [asdict(first)]}
 
-        if searched_product:
-            await self.add_to_cart(searched_product["search_results"][0]["id"], quantity)
-            return {"success": True, "message": "", "added_to_cart": [searched_product["search_results"][0]]}
+        in_fav = " in favourites" if favourite else ""
+        return {
+            "success": False,
+            "message": f'No product matched when searching for "{product_name}"{in_fav}.',
+            "added_to_cart": [],
+        }
 
-        else:
-            return {"success": False, "message": f'No product matched when searching for "{product_name}"{' in favourites' if favourite else ''}.', "added_to_cart": []}
-
-    async def delete_from_cart(self, order_field_id: str) -> Dict:
+    async def delete_from_cart(self, order_field_id: str) -> None:
         """Delete a product from the shopping cart using orderFieldId."""
-        result = await self._rohlik_api.delete_from_cart(order_field_id)
+        await self._client.cart.delete_item(order_field_id)
         await self.async_update()  # Refresh data after deletion
-        return result

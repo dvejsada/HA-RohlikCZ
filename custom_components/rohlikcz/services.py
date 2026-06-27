@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import List, Dict, Any
 
 import logging
@@ -61,7 +62,9 @@ def register_services(hass: HomeAssistant) -> None:
                 kwargs[ATTR_FAVOURITE_ONLY] = favourite
 
             result = await account.search_product(product_name, **kwargs)
-            return result or {}
+            if not result:
+                return {}
+            return {"search_results": [asdict(item) for item in result.results]}
         except Exception as err:
             _LOGGER.error(f"Failed to search for product: {err}")
             raise HomeAssistantError(f"Failed to search for product: {err}")
@@ -96,7 +99,7 @@ def register_services(hass: HomeAssistant) -> None:
         account = _get_account(hass, config_entry_id)
         try:
             result = await account.get_shopping_list(shopping_list_id)
-            return result
+            return asdict(result)
         except Exception as err:
             _LOGGER.error(f"Failed to get shopping list: {err}")
             raise HomeAssistantError(f"Failed to get shopping list: {err}")
@@ -108,7 +111,7 @@ def register_services(hass: HomeAssistant) -> None:
         account = _get_account(hass, config_entry_id)
         try:
             result = await account.get_cart_content()
-            return result
+            return asdict(result)
         except Exception as err:
             _LOGGER.error(f"Failed to get cart content: {err}")
             raise HomeAssistantError(f"Failed to get cart content: {err}")

@@ -3,10 +3,16 @@ from __future__ import annotations
 
 import copy
 
+from rohlik_api import Cart
+
 
 def sample_api_data() -> dict:
-    """A representative payload as returned by RohlikCZAPI.get_data()."""
-    return copy.deepcopy(
+    """A representative payload as returned by RohlikAPI.get_data().
+
+    Mirrors the real client: every endpoint is a raw JSON dict/list except
+    ``cart``, which is a typed :class:`~rohlik_api.Cart` model.
+    """
+    data = copy.deepcopy(
         {
             "login": {
                 "status": 200,
@@ -45,11 +51,7 @@ def sample_api_data() -> dict:
                     "priceComposition": {"total": {"amount": 750.0}},
                 }
             ],
-            "cart": {
-                "total_price": 0,
-                "total_items": 0,
-                "can_make_order": False,
-                "products": [],
-            },
         }
     )
+    data["cart"] = Cart(total_price=0, total_items=0, can_make_order=False, products=[])
+    return data

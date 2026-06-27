@@ -9,8 +9,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from rohlik_api import InvalidCredentialsError
+
 from custom_components.rohlikcz.const import DOMAIN
-from custom_components.rohlikcz.errors import InvalidCredentialsError
 
 VALID = {"title": "Test User", "user_id": "123456"}
 USER_INPUT = {CONF_EMAIL: "test@example.com", CONF_PASSWORD: "secret"}
