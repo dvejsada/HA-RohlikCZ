@@ -108,6 +108,18 @@ update_data:
         config_entry:
           integration: rohlikcz
 
+refresh_slots:
+  name: Refresh delivery slots
+  description: Cheaply refresh only the delivery-slot data (one request). Light enough to poll every few seconds to catch express availability without a full data update.
+  fields:
+    config_entry_id:
+      name: Account
+      description: The Rohlik account to use
+      required: true
+      selector:
+        config_entry:
+          integration: rohlikcz
+
 search_and_add_to_cart:
   name: Search and add to cart
   description: Search for a product and add to a shopping cart

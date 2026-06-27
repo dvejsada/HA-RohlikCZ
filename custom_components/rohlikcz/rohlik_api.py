@@ -89,10 +89,81 @@ class RohlikCZAPI:
         self._user_id = None
         self._address_id = None
         self.endpoints = {}
+        # A dedicated, reusable logged-in session for cheap slot polling. It has
+        # its own cookie jar (separate from the per-operation sessions), so it
+        # never clashes with get_data/service calls. Access is serialized.
+        self._slot_session: aiohttp.ClientSession | None = None
+        self._slot_lock = asyncio.Lock()
 
     def _new_session(self) -> aiohttp.ClientSession:
         """Create a fresh client session with an isolated cookie jar."""
         return aiohttp.ClientSession(timeout=HTTP_TIMEOUT)
+
+    def _timeslots_url(self) -> str | None:
+        """Build the preselected-timeslots URL, or None if no address is known."""
+        if not self._address_id:
+            return None
+        return (f"{BASE_URL}/services/frontend-service/timeslots-api/0"
+                f"?userId={self._user_id}&addressId={self._address_id}&reasonableDeliveryTime=true")
+
+    async def _ensure_slot_session(self) -> aiohttp.ClientSession:
+        """Return the reusable slot session, logging in if needed."""
+        if self._slot_session is None or self._slot_session.closed:
+            session = self._new_session()
+            await self.login(session)
+            self._slot_session = session
+        return self._slot_session
+
+    async def _reset_slot_session(self) -> None:
+        """Close the reusable slot session so the next call logs in fresh."""
+        if self._slot_session is not None:
+            await self._slot_session.close()
+            self._slot_session = None
+
+    async def get_timeslots(self) -> dict | None:
+        """Fetch only the preselected delivery slots, cheaply.
+
+        Reuses a logged-in session so a poll is a single GET rather than a full
+        login/logout cycle. Re-authenticates on 401 and retries once on a
+        dropped keep-alive connection. Returns None if the account has no
+        delivery address (no slot URL to query).
+        """
+        async with self._slot_lock:
+            try:
+                return await self._fetch_timeslots()
+            except aiohttp.ClientConnectionError:
+                # Stale keep-alive connection dropped by the server between
+                # polls - rebuild the session and try once more.
+                await self._reset_slot_session()
+                try:
+                    return await self._fetch_timeslots()
+                except _NETWORK_ERRORS as err:
+                    raise APIRequestFailedError(f"Cannot fetch timeslots: {err}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                raise APIRequestFailedError(f"Cannot fetch timeslots: {err}")
+
+    async def _fetch_timeslots(self) -> dict | None:
+        session = await self._ensure_slot_session()
+        url = self._timeslots_url()
+        if url is None:
+            return None
+        async with session.get(url) as response:
+            if response.status == 401:
+                # Session expired - log in again and retry once.
+                await self._reset_slot_session()
+                session = await self._ensure_slot_session()
+                url = self._timeslots_url()
+                if url is None:
+                    return None
+                async with session.get(url) as retry:
+                    retry.raise_for_status()
+                    return await retry.json(content_type=None)
+            response.raise_for_status()
+            return await response.json(content_type=None)
+
+    async def async_close(self) -> None:
+        """Close the reusable slot session (call on unload)."""
+        await self._reset_slot_session()
 
     async def login(self, session: aiohttp.ClientSession):
         """

@@ -212,6 +212,37 @@ async def test_get_cart_content_standalone_login_failure() -> None:
             await _api().get_cart_content()
 
 
+async def test_get_timeslots_reuses_session() -> None:
+    """get_timeslots logs in once and reuses the session across calls."""
+    login_with_addr = {"status": 200, "data": {"user": {"id": 123}, "address": {"id": 777}}}
+    slots = {"data": {"preselectedSlots": []}}
+    with aioresponses() as m:
+        # Login registered once (no repeat): a second login would 404 here.
+        m.post(LOGIN_URL, payload=login_with_addr)
+        m.get(
+            re.compile(r"^https://www\.rohlik\.cz/services/frontend-service/timeslots-api/"),
+            payload=slots,
+            repeat=True,
+        )
+        api = _api()
+        first = await api.get_timeslots()
+        second = await api.get_timeslots()  # reuses session; no second login
+        await api.async_close()
+
+    assert first == slots
+    assert second == slots
+
+
+async def test_get_timeslots_no_address_returns_none() -> None:
+    """Without a delivery address there is no slot URL, so None is returned."""
+    with aioresponses() as m:
+        m.post(LOGIN_URL, payload=LOGIN_OK)  # LOGIN_OK has no address
+        api = _api()
+        result = await api.get_timeslots()
+        await api.async_close()
+    assert result is None
+
+
 async def test_delete_from_cart_returns_json() -> None:
     with aioresponses() as m:
         m.post(LOGIN_URL, payload=LOGIN_OK)
