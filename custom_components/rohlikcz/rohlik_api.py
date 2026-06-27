@@ -148,18 +148,19 @@ class RohlikCZAPI:
         if url is None:
             return None
         async with session.get(url) as response:
-            if response.status == 401:
-                # Session expired - log in again and retry once.
-                await self._reset_slot_session()
-                session = await self._ensure_slot_session()
-                url = self._timeslots_url()
-                if url is None:
-                    return None
-                async with session.get(url) as retry:
-                    retry.raise_for_status()
-                    return await retry.json(content_type=None)
-            response.raise_for_status()
-            return await response.json(content_type=None)
+            if response.status != 401:
+                response.raise_for_status()
+                return await response.json(content_type=None)
+        # Session expired (401): the response is released as the context exits
+        # above, so it's now safe to close the session, log in again and retry.
+        await self._reset_slot_session()
+        session = await self._ensure_slot_session()
+        url = self._timeslots_url()
+        if url is None:
+            return None
+        async with session.get(url) as retry:
+            retry.raise_for_status()
+            return await retry.json(content_type=None)
 
     async def async_close(self) -> None:
         """Close the reusable slot session (call on unload)."""
@@ -267,14 +268,15 @@ class RohlikCZAPI:
             for endpoint, path in self.endpoints.items():
 
                 if endpoint == "next_delivery_slot":
-                    if self._address_id:
-                        path = self.endpoints["next_delivery_slot"] + f"0?userId={self._user_id}&addressId={self._address_id}&reasonableDeliveryTime=true"
-                    else:
+                    # Built (and DRYed) via the shared helper; None without an address.
+                    url = self._timeslots_url()
+                    if url is None:
                         result[endpoint] = None
                         continue
+                else:
+                    url = f"{BASE_URL}{path}"
 
                 try:
-                    url = f"{BASE_URL}{path}"
                     async with session.get(url) as response:
                         response.raise_for_status()
                         result[endpoint] = await response.json(content_type=None)

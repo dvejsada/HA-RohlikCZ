@@ -134,7 +134,6 @@ def register_services(hass: HomeAssistant) -> None:
         except Exception as err:
             raise HomeAssistantError(f"Failed to refresh slots: {err}")
 
-
     async def async_fetch_order_history(call: ServiceCall) -> None:
         """Fetch complete order history from Rohlik."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
