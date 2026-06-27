@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import List, Dict, Any
+from typing import Any
 
 import logging
 import voluptuous as vol
@@ -30,7 +30,7 @@ def _get_account(hass: HomeAssistant, config_entry_id: str):
 def register_services(hass: HomeAssistant) -> None:
     """Register services for the Rohlik integration."""
 
-    async def async_add_to_cart_service(call: ServiceCall) -> List[int]:
+    async def async_add_to_cart_service(call: ServiceCall) -> dict[str, Any]:
         """Add product to cart service."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
         product_id = call.data[ATTR_PRODUCT_ID]
@@ -45,7 +45,7 @@ def register_services(hass: HomeAssistant) -> None:
             _LOGGER.error(f"Failed to add product to cart: {err}")
             raise HomeAssistantError(f"Failed to add product to cart: {err}")
 
-    async def async_search_product_service(call: ServiceCall) -> Dict[str, Any]:
+    async def async_search_product_service(call: ServiceCall) -> dict[str, Any]:
         """Search for a product and return results."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
         product_name = call.data[ATTR_PRODUCT_NAME]
@@ -69,7 +69,7 @@ def register_services(hass: HomeAssistant) -> None:
             _LOGGER.error(f"Failed to search for product: {err}")
             raise HomeAssistantError(f"Failed to search for product: {err}")
 
-    async def async_search_and_add_product_service(call: ServiceCall) -> Dict[str, Any]:
+    async def async_search_and_add_product_service(call: ServiceCall) -> dict[str, Any]:
         """Search for a product and return results."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
         product_name = call.data[ATTR_PRODUCT_NAME]
@@ -91,7 +91,7 @@ def register_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(f"Failed to search for product: {err}")
 
 
-    async def async_get_shopping_list_service(call: ServiceCall) -> Dict[str, Any]:
+    async def async_get_shopping_list_service(call: ServiceCall) -> dict[str, Any]:
         """Get shopping list by ID."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
         shopping_list_id = call.data[ATTR_SHOPPING_LIST_ID]
@@ -104,7 +104,7 @@ def register_services(hass: HomeAssistant) -> None:
             _LOGGER.error(f"Failed to get shopping list: {err}")
             raise HomeAssistantError(f"Failed to get shopping list: {err}")
 
-    async def async_get_cart_service(call: ServiceCall) -> Dict[str, Any]:
+    async def async_get_cart_service(call: ServiceCall) -> dict[str, Any]:
         """Get shopping cart content."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
 
