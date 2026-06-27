@@ -151,6 +151,30 @@ async def test_setup_connection_error_retries(hass: HomeAssistant) -> None:
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
+async def test_monthly_spent_sums_current_month(hass: HomeAssistant) -> None:
+    """MonthlySpent totals current-month delivered orders (pure native_value)."""
+    now = dt_util.now()
+    data = sample_api_data()
+    data["delivered_orders"] = [
+        {
+            "id": 8001,
+            "orderTime": now.strftime("%Y-%m-15T10:00:00.000%z"),
+            "priceComposition": {"total": {"amount": 500.0}},
+        }
+    ]
+
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with _patch_get_data(return_value=data):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    spent_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_monthly_spent")
+    assert spent_id is not None
+    assert hass.states.get(spent_id).state == "500.0"
+
+
 async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp_path) -> None:
     """Auto-enrichment fetches items + categories and persists them.
 

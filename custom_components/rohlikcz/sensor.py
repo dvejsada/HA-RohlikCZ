@@ -597,9 +597,13 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def native_value(self) -> float | None:
         """Returns amount spent in current month."""
+        return self._monthly_total if self._monthly_total > 0 else 0.0
+
+    def _handle_coordinator_update(self) -> None:
+        """Process newly delivered orders on each coordinator refresh."""
         self._check_and_reset_month()
         self._process_new_orders()
-        return self._monthly_total if self._monthly_total > 0 else 0.0
+        self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:

@@ -630,16 +630,17 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                     await self._order_store.async_save()
             _LOGGER.info(f"Categorized {new_cats} products")
 
-        # Done
-        await self._notify(hass,
-            self._t("complete").format(
-                orders_enriched=stats["orders_enriched"],
-                products_categorized=stats["products_categorized"],
-                total_orders=self._order_store.alltime_count(),
-                enriched_orders=self._order_store.enriched_count,
-                products_in_cache=self._order_store.cached_product_count,
-            ),
-            self._t("title_complete"))
+        # Done - only notify if something was actually enriched this run.
+        if stats["orders_enriched"] > 0 or stats["products_categorized"] > 0:
+            await self._notify(hass,
+                self._t("complete").format(
+                    orders_enriched=stats["orders_enriched"],
+                    products_categorized=stats["products_categorized"],
+                    total_orders=self._order_store.alltime_count(),
+                    enriched_orders=self._order_store.enriched_count,
+                    products_in_cache=self._order_store.cached_product_count,
+                ),
+                self._t("title_complete"))
 
         self.async_update_listeners()
         return {
