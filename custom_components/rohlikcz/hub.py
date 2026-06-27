@@ -92,7 +92,7 @@ class OrderStore:
         # No Store data yet: import the legacy file if one exists.
         legacy = await self._hass.async_add_executor_job(self._load_legacy_sync)
         if legacy is not None:
-            self._data = self._migrate_legacy(legacy)
+            self._data = self._migrate_legacy(legacy, self._user_id)
             await self._store.async_save(self._data)
             await self._hass.async_add_executor_job(self._remove_legacy_sync)
             _LOGGER.info("Imported legacy order store for user %s into HA storage", self._user_id)
@@ -105,21 +105,22 @@ class OrderStore:
             with open(self._legacy_path, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as err:
-            _LOGGER.error(f"Failed to load legacy order store: {err}")
+            _LOGGER.error("Failed to load legacy order store: %s", err)
             return None
 
     def _remove_legacy_sync(self) -> None:
         """Delete the legacy JSON file after a successful import."""
         try:
             os.remove(self._legacy_path)
-        except OSError:
-            pass
+        except OSError as err:
+            _LOGGER.warning("Could not remove legacy order store file %s: %s", self._legacy_path, err)
 
     @staticmethod
-    def _migrate_legacy(data: dict) -> dict:
+    def _migrate_legacy(data: dict, user_id: str = "") -> dict:
         """Bring imported legacy data up to the current schema (v1/v2 -> v3)."""
         if not isinstance(data, dict):
-            return OrderStore._default_data("")
+            return OrderStore._default_data(user_id)
+        data = dict(data)  # avoid mutating the caller's dict
         data.setdefault("orders", {})
         data.setdefault("product_categories", {})
         if "backfill_complete" not in data:
