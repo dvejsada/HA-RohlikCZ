@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/v/release/dvejsada/HA-RohlikCZ)](https://github.com/dvejsada/HA-RohlikCZ/releases)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-%3E%3D2025.2-blue)](https://www.home-assistant.io/)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-%3E%3D2024.12-blue)](https://www.home-assistant.io/)
 
 Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home Assistant! Track deliveries, monitor your cart, automate shopping, and never miss a delivery window — all from your smart home dashboard.
 
