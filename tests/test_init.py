@@ -1,6 +1,8 @@
 """Tests for setup, coordinator behaviour, and unloading."""
 from __future__ import annotations
 
+import json
+import os
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -274,7 +276,34 @@ async def test_spending_breakdown_sensors_registered(hass: HomeAssistant, hass_s
     assert state_items.attributes.get("items") is None
 
 
-async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp_path) -> None:
+async def test_order_store_imports_legacy_file(hass: HomeAssistant, hass_storage) -> None:
+    """A pre-Store JSON file is imported once into Store and then removed."""
+    storage_dir = hass.config.path(".storage")
+    os.makedirs(storage_dir, exist_ok=True)
+    legacy_path = os.path.join(storage_dir, "rohlikcz_999_orders.json")
+    legacy = {
+        "version": 1,
+        "user_id": "999",
+        "tracking_since": "2026-01-01T00:00:00+01:00",
+        "orders": {"1": {"date": "2026-01-15", "amount": 100.0}},
+    }
+    with open(legacy_path, "w") as f:
+        json.dump(legacy, f)
+
+    store = await OrderStore.async_create(hass, "999")
+
+    # Orders imported.
+    assert store.alltime_count() == 1
+    assert store.alltime_total() == 100.0
+    # v1 -> v3 schema fields filled in.
+    assert store.backfill_complete is True  # tracking_since was set
+    assert "product_categories" in store._data
+    # Legacy file removed; data now lives in HA Store.
+    assert not os.path.exists(legacy_path)
+    assert "rohlikcz_999_orders" in hass_storage
+
+
+async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, hass_storage) -> None:
     """Auto-enrichment fetches items + categories and persists them.
 
     Also guards the refactor that releases the store lock during network I/O.
@@ -290,7 +319,7 @@ async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp
     account = RohlikAccount(
         hass, "user", "pass", analytics=["categories_l1"], entry=entry
     )
-    store = await OrderStore.async_create(str(tmp_path), "123456", hass)
+    store = await OrderStore.async_create(hass, "123456")
     store.process_orders(
         [
             {
@@ -325,7 +354,7 @@ async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, tmp
     assert store.get_product_category(111, 1) == "Dairy"
 
 
-async def test_enrich_order_details_applies_results(hass: HomeAssistant, tmp_path) -> None:
+async def test_enrich_order_details_applies_results(hass: HomeAssistant, hass_storage) -> None:
     """The enrich_orders service path enriches items + categories.
 
     Guards the lock-split refactor in _enrich_order_details / enrich_order_details.
@@ -341,7 +370,7 @@ async def test_enrich_order_details_applies_results(hass: HomeAssistant, tmp_pat
     account = RohlikAccount(
         hass, "user", "pass", analytics=["categories_l1"], entry=entry
     )
-    store = await OrderStore.async_create(str(tmp_path), "123456", hass)
+    store = await OrderStore.async_create(hass, "123456")
     store.process_orders(
         [
             {
