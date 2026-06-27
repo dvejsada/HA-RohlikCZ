@@ -204,6 +204,14 @@ async def test_fetch_all_delivered_orders_survives_logout_failure() -> None:
     assert orders == [{"id": 1}, {"id": 2}]
 
 
+async def test_get_cart_content_standalone_login_failure() -> None:
+    """Standalone get_cart_content surfaces a login error (and closes its session)."""
+    with aioresponses() as m:
+        m.post(LOGIN_URL, payload={"status": 401, "messages": [{"content": "Bad creds"}]})
+        with pytest.raises(InvalidCredentialsError):
+            await _api().get_cart_content()
+
+
 async def test_delete_from_cart_returns_json() -> None:
     with aioresponses() as m:
         m.post(LOGIN_URL, payload=LOGIN_OK)

@@ -379,10 +379,10 @@ class RohlikCZAPI:
 
             return all_orders
 
-        except _NETWORK_ERRORS as err:
-            _LOGGER.error(f"Error during full order history fetch: {err}")
-            return all_orders
         finally:
+            # Per-page network errors are handled in get_delivered_orders_page
+            # (which returns [] and ends pagination), so no network error can
+            # reach here; a login failure propagates to the caller.
             try:
                 await self.logout(session)
             except Exception:
@@ -547,11 +547,14 @@ class RohlikCZAPI:
         """
 
         cart_url = "/services/frontend-service/v2/cart"
+        own_session = not logged_in
 
-        if not logged_in:
+        if own_session:
             session = self._new_session()
-            await self.login(session)
         try:
+            # Login inside the try so the session is still closed if it fails.
+            if own_session:
+                await self.login(session)
             async with session.get(f"{BASE_URL}{cart_url}") as response:
                 response.raise_for_status()
                 cart_content = await response.json(content_type=None)
@@ -560,7 +563,7 @@ class RohlikCZAPI:
             _LOGGER.error(f"Request failed: {err}")
             raise ValueError("Request failed")
         finally:
-            if not logged_in:
+            if own_session:
                 try:
                     await self.logout(session)
                 except Exception:
