@@ -174,6 +174,12 @@ If something isn't working, download the integration's diagnostics from **Settin
 
 ---
 
+## 🔗 Related Projects
+
+Want to do your Rohlík.cz shopping by **just talking to your AI assistant**? Check out the companion **[Rohlík MCP Server](https://github.com/dvejsada/rohlik-mcp)** — a [Model Context Protocol](https://modelcontextprotocol.io) server that connects Rohlík.cz to AI assistants like Claude. Search products, manage your cart, find recipes, and track orders entirely through conversation. Runs as a Docker container and works alongside this integration.
+
+---
+
 ## 🤝 Contributing & Support
 
 - 🐛 Found a bug? [Open an issue](https://github.com/dvejsada/HA-RohlikCZ/issues)
