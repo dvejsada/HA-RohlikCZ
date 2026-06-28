@@ -13,8 +13,9 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from rohlik_api import APIRequestFailedError, InvalidCredentialsError
+
 from custom_components.rohlikcz.const import CONF_ANALYTICS, DOMAIN
-from custom_components.rohlikcz.errors import APIRequestFailedError, InvalidCredentialsError
 from custom_components.rohlikcz.hub import OrderStore, RohlikAccount
 
 from fixtures_data import sample_api_data
@@ -30,7 +31,7 @@ def _entry() -> MockConfigEntry:
 
 def _patch_get_data(side_effect=None, return_value=None):
     return patch(
-        "custom_components.rohlikcz.rohlik_api.RohlikCZAPI.get_data",
+        "custom_components.rohlikcz.hub.RohlikAPI.get_data",
         new=AsyncMock(side_effect=side_effect, return_value=return_value),
     )
 
@@ -196,7 +197,7 @@ async def test_refresh_slots_updates_express_sensor(hass: HomeAssistant) -> None
 
     account = entry.runtime_data
     fresh_slots = {"data": {"expressSlot": {"timeSlotCapacityDTO": {"totalFreeCapacityPercent": 80}}}}
-    account._rohlik_api.get_timeslots = AsyncMock(return_value=fresh_slots)
+    account._client.delivery.get_next_slots = AsyncMock(return_value=fresh_slots)
 
     await account.refresh_slots()
     await hass.async_block_till_done()
@@ -272,12 +273,12 @@ async def test_spending_breakdown_sensors_registered(hass: HomeAssistant, hass_s
     entry.add_to_hass(hass)
 
     no_network = {
-        "fetch_all_delivered_orders": AsyncMock(return_value=[]),
-        "enrich_orders_with_items": AsyncMock(return_value={}),
-        "fetch_product_categories_batch": AsyncMock(return_value={}),
+        "fetch_full_order_history": AsyncMock(return_value={}),
+        "_fetch_order_items": AsyncMock(return_value={}),
+        "_fetch_product_categories": AsyncMock(return_value={}),
     }
     with _patch_get_data(return_value=sample_api_data()), patch.multiple(
-        "custom_components.rohlikcz.rohlik_api.RohlikCZAPI", **no_network
+        "custom_components.rohlikcz.hub.RohlikAccount", **no_network
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -361,7 +362,7 @@ async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, has
         ]
     )
     account._order_store = store
-    account._rohlik_api.enrich_orders_with_items = AsyncMock(
+    account._fetch_order_items = AsyncMock(
         return_value={
             "9001": [
                 {
@@ -375,7 +376,7 @@ async def test_auto_enrich_applies_items_and_categories(hass: HomeAssistant, has
             ]
         }
     )
-    account._rohlik_api.fetch_product_categories_batch = AsyncMock(
+    account._fetch_product_categories = AsyncMock(
         return_value={111: [{"level": 1, "name": "Dairy"}]}
     )
 
@@ -412,7 +413,7 @@ async def test_enrich_order_details_applies_results(hass: HomeAssistant, hass_st
         ]
     )
     account._order_store = store
-    account._rohlik_api.enrich_orders_with_items = AsyncMock(
+    account._fetch_order_items = AsyncMock(
         return_value={
             "9002": [
                 {
@@ -426,7 +427,7 @@ async def test_enrich_order_details_applies_results(hass: HomeAssistant, hass_st
             ]
         }
     )
-    account._rohlik_api.fetch_product_categories_batch = AsyncMock(
+    account._fetch_product_categories = AsyncMock(
         return_value={222: [{"level": 1, "name": "Bakery"}]}
     )
 
@@ -446,17 +447,17 @@ async def test_coordinator_refresh_updates_data(hass: HomeAssistant) -> None:
 
     first = sample_api_data()
     second = sample_api_data()
-    second["cart"]["total_items"] = 3
+    second["cart"].total_items = 3
 
     mocked = AsyncMock(side_effect=[first, second])
     with patch(
-        "custom_components.rohlikcz.rohlik_api.RohlikCZAPI.get_data", new=mocked
+        "custom_components.rohlikcz.hub.RohlikAPI.get_data", new=mocked
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         account = entry.runtime_data
-        assert account.data["cart"]["total_items"] == 0
+        assert account.data["cart"].total_items == 0
 
         await account.async_update()
         await hass.async_block_till_done()
-        assert account.data["cart"]["total_items"] == 3
+        assert account.data["cart"].total_items == 3

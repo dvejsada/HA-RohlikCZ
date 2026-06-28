@@ -20,8 +20,7 @@ from .const import (
     DOMAIN, CONF_ANALYTICS, ANALYTICS_OPTIONS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
 )
-from .errors import InvalidCredentialsError
-from .rohlik_api import RohlikCZAPI
+from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,10 +30,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     Returns the account title and unique user id on success.
     """
-    api = RohlikCZAPI(data[CONF_EMAIL], data[CONF_PASSWORD])
-    reply = await api.get_data()
-    user = reply["login"]["data"]["user"]
-    return {"title": user["name"], "user_id": str(user["id"])}
+    # A one-shot client that owns (and on close fully tears down) its session.
+    client = RohlikAPI(data[CONF_EMAIL], data[CONF_PASSWORD])
+    try:
+        reply = await client.login()
+        user = reply["data"]["user"]
+        return {"title": user["name"], "user_id": str(user["id"])}
+    finally:
+        await client.close()
 
 
 ANALYTICS_SCHEMA = vol.Schema({
@@ -78,6 +81,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, user_input)
             except InvalidCredentialsError:
                 errors["base"] = "invalid_auth"
+            except RohlikAPIError:
+                errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unknown exception")
                 errors["base"] = "unknown"
@@ -139,6 +144,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, data)
             except InvalidCredentialsError:
                 errors["base"] = "invalid_auth"
+            except RohlikAPIError:
+                errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unknown exception")
                 errors["base"] = "unknown"

@@ -55,25 +55,25 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
     @property
     def todo_items(self) -> list[TodoItem] | None:
         """Handle updated data from the hub."""
-        cart_content = self._rohlik_hub.data["cart"]
+        cart = self._rohlik_hub.data["cart"]
 
-        if not cart_content:
+        if not cart:
             return None
 
         items = []
-        for product in cart_content.get("products", []):
+        for product in cart.products:
             # Format the summary to include relevant information
-            summary = f"{product['name']} ({product['quantity']}) - {product['price']} Kč"
+            summary = f"{product.name} ({product.quantity}) - {product.price} Kč"
 
             # Use cart_item_id as the unique identifier for cart items
             items.append(
                 TodoItem(
                     summary=summary,
-                    uid=str(product['cart_item_id']),
+                    uid=str(product.cart_item_id),
                     status=TodoItemStatus.NEEDS_ACTION,
-                    description=f"Category: {product.get('category_name', '')}\n"
-                               f"Brand: {product.get('brand', '')}\n"
-                               f"Product ID: {product['id']}"
+                    description=f"Category: {product.category_name}\n"
+                               f"Brand: {product.brand}\n"
+                               f"Product ID: {product.id}"
                 )
             )
 
