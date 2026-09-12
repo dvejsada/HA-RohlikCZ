@@ -769,13 +769,12 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
 
     async def async_close(self) -> None:
         """Release resources held by the API client (called on unload)."""
-        try:
-            # Logs out (best-effort) but leaves the injected session open...
-            await self._client.close()
-        finally:
-            # ...so always close the HA-managed session we created here, even
-            # if logout/close raised.
-            await self._session.close()
+        # Logs out (best-effort) and leaves the injected session alone. The
+        # session came from async_create_clientsession during entry setup, so
+        # Home Assistant detaches it itself when the entry unloads - closing it
+        # here would only trip the "custom integration closes the Home
+        # Assistant aiohttp session" warning.
+        await self._client.close()
 
     # New service methods
     async def add_to_cart(self, product_id: int, quantity: int) -> dict:

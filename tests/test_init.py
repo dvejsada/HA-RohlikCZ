@@ -67,6 +67,37 @@ async def test_setup_creates_entities_and_unloads(hass: HomeAssistant) -> None:
     assert entry.state is ConfigEntryState.NOT_LOADED
 
 
+async def test_unload_leaves_ha_session_to_home_assistant(
+    hass: HomeAssistant, caplog
+) -> None:
+    """Unloading logs the client out without closing the HA aiohttp session.
+
+    The session comes from async_create_clientsession during entry setup, so
+    Home Assistant detaches it on unload. Closing it ourselves is a no-op that
+    only warns the user to file a bug report.
+    """
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=sample_api_data()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    session = entry.runtime_data._session
+
+    with patch(
+        "custom_components.rohlikcz.hub.RohlikAPI.close", new=AsyncMock()
+    ) as client_close:
+        caplog.clear()
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+    client_close.assert_awaited_once()
+    assert "closes the Home Assistant aiohttp session" not in caplog.text
+    # Home Assistant's own entry-unload cleanup detaches the session for us.
+    assert session.closed
+
+
 async def test_updated_sensor_reflects_last_refresh(hass: HomeAssistant) -> None:
     """The 'updated' sensor shows the coordinator's last fetch time, not now()."""
     entry = _entry()
