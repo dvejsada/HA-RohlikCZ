@@ -5,7 +5,7 @@ import logging
 import re
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass
@@ -14,7 +14,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
+from homeassistant.util import dt as dt_util
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
@@ -24,6 +25,8 @@ from .hub import OrderStore, RohlikAccount
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
 
 _LOGGER = logging.getLogger(__name__)
+
+LIVE_ETA_STALE_AFTER = timedelta(hours=1)
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -144,6 +147,60 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
                 self._last_attributes = dict(last_state.attributes)
 
 
+@dataclass
+class DeliveryTimeExtraStoredData(ExtraStoredData):
+    """Extra stored data for a delivery time sensor."""
+
+    last_live_value: datetime | None
+    last_live_order_id: str | None
+    last_live_slot_since: datetime | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return serializable delivery time data."""
+        return {
+            "last_live_value": (
+                self.last_live_value.isoformat()
+                if self.last_live_value is not None
+                else None
+            ),
+            "last_live_order_id": self.last_live_order_id,
+            "last_live_slot_since": (
+                self.last_live_slot_since.isoformat()
+                if self.last_live_slot_since is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DeliveryTimeExtraStoredData | None:
+        """Initialize stored delivery time data from a dict."""
+        try:
+            last_live_value = (
+                dt_util.parse_datetime(data["last_live_value"])
+                if data.get("last_live_value")
+                else None
+            )
+            last_live_slot_since = (
+                dt_util.parse_datetime(data["last_live_slot_since"])
+                if data.get("last_live_slot_since")
+                else None
+            )
+            last_live_order_id = data.get("last_live_order_id")
+        except (TypeError, ValueError):
+            return None
+
+        if (
+            data.get("last_live_value") is not None
+            and last_live_value is None
+        ) or (
+            data.get("last_live_slot_since") is not None
+            and last_live_slot_since is None
+        ):
+            return None
+
+        return cls(last_live_value, last_live_order_id, last_live_slot_since)
+
+
 class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     """Sensor for showing delivery time."""
 
@@ -155,6 +212,40 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
         """Initialize the delivery time sensor."""
         super().__init__(rohlik_account)
         self._last_value: datetime | None = None
+        self._last_live_value: datetime | None = None
+        self._last_live_order_id: str | None = None
+        self._last_live_slot_since: datetime | None = None
+
+    def _clear_last_live_value(self, order_id: str | None = None) -> None:
+        """Forget a live ETA, optionally only when it belongs to an order."""
+        if order_id is not None and self._last_live_order_id != order_id:
+            return
+        self._last_live_value = None
+        self._last_live_order_id = None
+        self._last_live_slot_since = None
+
+    def _preserved_live_value(
+        self,
+        earliest_order_id: str | None,
+        slot_since: datetime | None,
+    ) -> datetime | None:
+        """Return a current live ETA when it still belongs to this order."""
+        if (
+            earliest_order_id is None
+            or self._last_live_order_id != earliest_order_id
+            or self._last_live_value is None
+        ):
+            return None
+
+        if slot_since != self._last_live_slot_since:
+            self._clear_last_live_value()
+            return None
+
+        if dt_util.now() > self._last_live_value + LIVE_ETA_STALE_AFTER:
+            self._clear_last_live_value()
+            return None
+
+        return self._last_live_value
 
     @property
     def native_value(self) -> datetime | None:
@@ -162,14 +253,36 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
 
         The precise delivery time comes from the delivery announcement, but with
         multiple concurrent orders the announcement may relate to a later order
-        rather than the soonest one. In that case (or once the announcement has
-        been cleared) we fall back to the delivery slot of the earliest upcoming
-        order - the same source the delivery slot sensors use - which always
-        reflects the soonest order.
+        rather than the soonest one. In that case we fall back to the delivery
+        slot of the earliest upcoming order. When the announcement is cleared,
+        preserve its last live ETA only while the same order remains the soonest
+        upcoming order.
         """
         announcements: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
         upcoming_orders: list = self._rohlik_account.data.get("next_order", []) or []
         earliest_order = get_earliest_order(upcoming_orders)
+        earliest_order_id = (
+            str(earliest_order.get("id"))
+            if earliest_order is not None and earliest_order.get("id") is not None
+            else None
+        )
+        slot_since = (
+            parse_delivery_datetime_string(
+                earliest_order.get("deliverySlot", {}).get("since")
+            )
+            if earliest_order is not None
+            else None
+        )
+
+        if (
+            self._last_live_order_id is not None
+            and self._last_live_order_id != earliest_order_id
+        ):
+            self._clear_last_live_value()
+
+        preserved_live_value = self._preserved_live_value(
+            earliest_order_id, slot_since
+        )
 
         if len(announcements) > 0:
             announcement = announcements[0]
@@ -184,26 +297,56 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                 delivery_time = extract_delivery_datetime(announcement.get("content", ""))
                 if delivery_time is not None:
                     self._last_value = delivery_time
+                    self._last_live_value = delivery_time
+                    self._last_live_order_id = earliest_order_id
+                    self._last_live_slot_since = slot_since
                     return delivery_time
 
+                if preserved_live_value is not None:
+                    # The announcement can remain present while no longer
+                    # containing an ETA. Preserve the last precise value for
+                    # this order instead of replacing it with the booked slot.
+                    self._last_value = preserved_live_value
+                    return preserved_live_value
+
+            elif preserved_live_value is not None:
+                # A later concurrent order's announcement does not supersede
+                # the last live ETA of the still-earliest order.
+                self._last_value = preserved_live_value
+                return preserved_live_value
+
+        elif preserved_live_value is not None:
+            # Rohlík commonly clears the announcement shortly before delivery.
+            # Keep its precise ETA while the same order is still the soonest.
+            self._last_value = preserved_live_value
+            return preserved_live_value
+
         # Fall back to the delivery slot of the soonest order.
-        if earliest_order is not None:
-            slot_since = parse_delivery_datetime_string(
-                earliest_order.get("deliverySlot", {}).get("since")
-            )
-            if slot_since is not None:
-                self._last_value = slot_since
-                return slot_since
+        if slot_since is not None:
+            self._last_value = slot_since
+            return slot_since
 
         # No live data available - preserve the last known value while an order
         # still exists so it isn't cleared shortly before delivery.
         if self._rohlik_account.is_ordered and self._last_value is not None:
             return self._last_value
+
+        if not self._rohlik_account.is_ordered:
+            self._clear_last_live_value()
         return None
 
     @property
     def icon(self) -> str:
         return ICON_DELIVERY_TIME
+
+    @property
+    def extra_restore_state_data(self) -> DeliveryTimeExtraStoredData:
+        """Return delivery time data to restore after a restart."""
+        return DeliveryTimeExtraStoredData(
+            self._last_live_value,
+            self._last_live_order_id,
+            self._last_live_slot_since,
+        )
 
     async def async_added_to_hass(self) -> None:
         """Restore state when added to HA."""
@@ -224,6 +367,15 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                         "Failed to restore delivery time from last state %r",
                         last_state.state,
                     )
+
+        if (last_extra_data := await self.async_get_last_extra_data()) is not None:
+            restored = DeliveryTimeExtraStoredData.from_dict(
+                last_extra_data.as_dict()
+            )
+            if restored is not None:
+                self._last_live_value = restored.last_live_value
+                self._last_live_order_id = restored.last_live_order_id
+                self._last_live_slot_since = restored.last_live_slot_since
 
 
 @dataclass(frozen=True, kw_only=True)
