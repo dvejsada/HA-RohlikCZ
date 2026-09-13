@@ -25,6 +25,7 @@ Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home 
 - 🔍 **Add products to cart by voice** — use Home Assistant automations to add items hands-free
 - 📅 **Calendar view** — all your delivery windows visible in the Home Assistant calendar
 - 💳 **Account overview** — credit balance, premium status, reusable bag count, and more
+- 🧩 **Ready-made dashboard cards** — install the companion [Rohlík.cz Cards](https://github.com/dvejsada/rohlik-cz-HA-cards) from HACS for a next-delivery card, a live shopping cart with search, delivery slots, account and spending cards
 
 ---
 
@@ -192,6 +193,16 @@ If something isn't working, download the integration's diagnostics from **Settin
 ---
 
 ## 🔗 Related Projects
+
+### 🧩 Dashboard cards
+
+**[Rohlík.cz Cards](https://github.com/dvejsada/rohlik-cz-HA-cards)** is a set of custom Lovelace cards built for this integration: **Next Delivery** (countdown, live ETA and courier announcement, plus a badge), **Shopping Cart** (your cart with quantity steppers, product search and an Order button), **Delivery Slots** (express/standard/eco with capacity and an express watch mode), **Account** and **Spending** (month, year, all-time and category breakdown). Every card only needs you to pick your Rohlík.cz device in the visual editor, speaks Czech and English, and follows your dashboard theme.
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=dvejsada&repository=rohlik-cz-HA-cards&category=dashboard)
+
+![Rohlík.cz cards overview](https://raw.githubusercontent.com/dvejsada/rohlik-cz-HA-cards/main/docs/images/overview.png?v=0.1.0-alpha)
+
+### 🤖 AI assistant
 
 Want to do your Rohlík.cz shopping by **just talking to your AI assistant**? Check out the companion **[Rohlík MCP Server](https://github.com/dvejsada/rohlik-mcp)** — a [Model Context Protocol](https://modelcontextprotocol.io) server that connects Rohlík.cz to AI assistants like Claude. Search products, manage your cart, find recipes, and track orders entirely through conversation. Runs as a Docker container and works alongside this integration.
 
