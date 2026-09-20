@@ -158,6 +158,19 @@ def extract_delivery_datetime(text: str) -> datetime | None:
         except (ValueError, IndexError):
             pass
 
+    # Last resort: the short announcement variant Rohlík sends in the final
+    # minutes ("Doručíme přibližně za 2 minuty.") highlights no value and
+    # carries no clock time, so the minute count in the plain text is the only
+    # ETA available. Anchored on "za ... minut", it cannot pick up a clock time.
+    plain_minutes = re.search(
+        r'za\s+([0-9]+)\s*(?:minut\w*|min)\b', plain_text, re.IGNORECASE
+    )
+    if plain_minutes:
+        try:
+            return now + timedelta(minutes=int(plain_minutes.group(1)))
+        except ValueError:
+            pass
+
     # No valid time information found
     return None
 
