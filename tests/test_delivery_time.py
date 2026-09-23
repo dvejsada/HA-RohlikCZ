@@ -263,3 +263,80 @@ async def test_preserved_live_eta_survives_reload(
         await hass.async_block_till_done()
 
     assert _state_time(hass, entity_id) == live_time
+
+
+def _minutes_announcement(order_id: int, minutes: int) -> dict:
+    return {
+        "id": order_id,
+        "title": "Delivery",
+        "updatedAt": datetime.now(ZoneInfo("Europe/Prague")).isoformat(),
+        "content": f"Váš nákup doručíme přibližně za {minutes} minuty.",
+    }
+
+
+async def test_short_minutes_announcement_sets_eta(
+    hass: HomeAssistant,
+) -> None:
+    """The short "za X minut" announcement replaces the earlier clock-time ETA."""
+    live_time, slot_start = _delivery_times()
+    data = sample_api_data()
+    data["next_order"] = [_order(7001, slot_start)]
+    data["delivery_announcements"]["data"]["announcements"] = [
+        _announcement(7001, live_time)
+    ]
+
+    entry, entity_id = await _setup_delivery_time(hass, data)
+    assert _state_time(hass, entity_id) == live_time
+
+    updated_data = copy.deepcopy(data)
+    updated_data["delivery_announcements"]["data"]["announcements"] = [
+        _minutes_announcement(7001, 2)
+    ]
+    before = dt_util.now()
+    entry.runtime_data.async_set_updated_data(updated_data)
+    await hass.async_block_till_done()
+    after = dt_util.now()
+
+    eta = _state_time(hass, entity_id)
+    assert eta is not None
+    # The state is serialized with whole seconds.
+    assert (
+        before.replace(microsecond=0) + timedelta(minutes=2)
+        <= eta
+        <= after + timedelta(minutes=2)
+    )
+
+
+async def test_unchanged_minutes_announcement_does_not_drift(
+    hass: HomeAssistant,
+) -> None:
+    """Re-polling the same relative announcement keeps the original ETA."""
+    _, slot_start = _delivery_times()
+    data = sample_api_data()
+    data["next_order"] = [_order(7001, slot_start)]
+    data["delivery_announcements"]["data"]["announcements"] = [
+        _minutes_announcement(7001, 2)
+    ]
+
+    entry, entity_id = await _setup_delivery_time(hass, data)
+    first_eta = _state_time(hass, entity_id)
+    assert first_eta is not None
+
+    later = dt_util.now() + timedelta(minutes=1)
+    with patch(
+        "custom_components.rohlikcz.sensor.dt_util.now", return_value=later
+    ):
+        entry.runtime_data.async_set_updated_data(copy.deepcopy(data))
+        await hass.async_block_till_done()
+        assert _state_time(hass, entity_id) == first_eta
+
+        # A new text restarts the count from when it arrived.
+        changed_data = copy.deepcopy(data)
+        changed_data["delivery_announcements"]["data"]["announcements"] = [
+            _minutes_announcement(7001, 3)
+        ]
+        entry.runtime_data.async_set_updated_data(changed_data)
+        await hass.async_block_till_done()
+        assert _state_time(hass, entity_id) == (
+            later + timedelta(minutes=3)
+        ).replace(microsecond=0)

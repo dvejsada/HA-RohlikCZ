@@ -40,7 +40,15 @@ def calculate_current_month_orders_total(orders: list) -> float|None:
         return None
 
 
-def extract_delivery_datetime(text: str) -> datetime | None:
+# "za 2 minuty" / "za 10 minut" / "za 1 minutu" (Czech plural forms), or the
+# numberless "za minutu". Anchored on "za" so a clock time such as "10:11" can
+# never be read as a minute count.
+_MINUTES_UNTIL_PATTERN = re.compile(
+    r'\bza\s+(?:(\d{1,3})\s*(?:minut|min\b)|minutu\b)', re.IGNORECASE
+)
+
+
+def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetime | None:
     """
     Extract delivery time information from various formatted strings and return a datetime object.
 
@@ -51,19 +59,27 @@ def extract_delivery_datetime(text: str) -> datetime | None:
 
     Args:
         text: HTML text containing delivery time information
+        now: Reference time the announcement was received at. Relative
+            ("in 3 minutes") messages are counted from it, and clock times
+            earlier than it roll over to the next day. Defaults to the current
+            time.
 
     Returns:
         A timezone-aware datetime object representing the delivery time, or None if no valid time found
     """
 
-    # Replace Unicode escape sequences
-    clean_text: str = text.encode('utf-8').decode('unicode_escape')
+    # Decode literal \uXXXX escape sequences. The text normally arrives already
+    # decoded from JSON, so non-ASCII characters (Czech diacritics) must be left
+    # untouched rather than round-tripped through the unicode_escape codec.
+    clean_text: str = re.sub(
+        r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), text
+    )
 
     # Get plain text without HTML tags for pattern detection
     plain_text: str = re.sub(r'<[^>]+>', '', clean_text)
 
     prague_tz = ZoneInfo('Europe/Prague')
-    now = datetime.now(tz=prague_tz)
+    now = now.astimezone(prague_tz) if now is not None else datetime.now(tz=prague_tz)
     current_year: int = now.year
 
     # Check for Type 3: Minutes until delivery
@@ -157,6 +173,13 @@ def extract_delivery_datetime(text: str) -> datetime | None:
             return delivery_dt
         except (ValueError, IndexError):
             pass
+
+    # Last resort: a plain minute count without any clock time, e.g. the short
+    # "Váš nákup doručíme přibližně za 2 minuty." sent during the final approach.
+    minutes_match = _MINUTES_UNTIL_PATTERN.search(plain_text)
+    if minutes_match:
+        minutes = int(minutes_match.group(1)) if minutes_match.group(1) else 1
+        return now + timedelta(minutes=minutes)
 
     # No valid time information found
     return None

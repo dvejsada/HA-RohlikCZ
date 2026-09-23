@@ -28,6 +28,27 @@ _LOGGER = logging.getLogger(__name__)
 
 LIVE_ETA_STALE_AFTER = timedelta(hours=1)
 
+
+class AnnouncementClock:
+    """Remember when the current delivery announcement text was first seen.
+
+    A relative announcement ("za 2 minuty") is counted from the moment it was
+    received. Re-parsing the same unchanged text against the current time on
+    every refresh would push the ETA later with each poll, so the reference time
+    only moves when Rohlík sends a different text.
+    """
+
+    def __init__(self) -> None:
+        self._content: str | None = None
+        self._first_seen: datetime | None = None
+
+    def reference_time(self, content: str) -> datetime:
+        """Return when ``content`` was first seen, recording it if new."""
+        if content != self._content or self._first_seen is None:
+            self._content = content
+            self._first_seen = dt_util.now()
+        return self._first_seen
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -86,6 +107,7 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
         super().__init__(rohlik_account)
         self._last_value: str | None = None
         self._last_attributes: Mapping[str, Any] | None = None
+        self._announcement_clock = AnnouncementClock()
 
     @property
     def native_value(self) -> str | None:
@@ -107,7 +129,10 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
         """ Get extra state attributes. """
         delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
         if len(delivery_info) > 0:
-            delivery_time = extract_delivery_datetime(delivery_info[0].get("content", ""))
+            content = delivery_info[0].get("content", "")
+            delivery_time = extract_delivery_datetime(
+                content, self._announcement_clock.reference_time(content)
+            )
 
             if delivery_info[0].get("additionalContent", None):
                 clean_text = delivery_info[0]["additionalContent"]
@@ -212,6 +237,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
         """Initialize the delivery time sensor."""
         super().__init__(rohlik_account)
         self._last_value: datetime | None = None
+        self._announcement_clock = AnnouncementClock()
         self._last_live_value: datetime | None = None
         self._last_live_order_id: str | None = None
         self._last_live_slot_since: datetime | None = None
@@ -294,7 +320,10 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                 or str(announcement.get("id", "")) == str(earliest_order.get("id", ""))
             )
             if announcement_matches_soonest:
-                delivery_time = extract_delivery_datetime(announcement.get("content", ""))
+                content = announcement.get("content", "")
+                delivery_time = extract_delivery_datetime(
+                    content, self._announcement_clock.reference_time(content)
+                )
                 if delivery_time is not None:
                     self._last_value = delivery_time
                     self._last_live_value = delivery_time
