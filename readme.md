@@ -13,7 +13,7 @@ Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home 
 > This integration uses a reverse-engineered API from the Rohlík.cz website. It is **not** officially supported by Rohlík.cz. Use it at your own risk.
 
 > [!NOTE]
-> The current release is **1.0.0-beta2**, a pre-release of the upcoming 1.0.0. It is feature-complete but still being tested — see [Installing the beta](#installing-the-beta) below, and please [report anything you run into](https://github.com/dvejsada/HA-RohlikCZ/issues).
+> The current release is **1.0.0-beta3**, a pre-release of the upcoming 1.0.0. It is feature-complete but still being tested — see [Installing the beta](#installing-the-beta) below, and please [report anything you run into](https://github.com/dvejsada/HA-RohlikCZ/issues).
 
 ---
 
@@ -46,7 +46,7 @@ HACS hides pre-releases by default, so the 1.0.0 beta will not show up until you
 1. Open **Rohlík.cz** in HACS.
 2. Click **⋮ → Redownload**.
 3. Enable **Show beta versions**.
-4. Pick `v1.0.0-beta2` and download it.
+4. Pick `v1.0.0-beta3` and download it.
 5. Restart Home Assistant.
 
 ### Option 2 — Manual Installation
