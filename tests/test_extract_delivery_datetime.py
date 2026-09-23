@@ -22,6 +22,10 @@ HIGHLIGHT = '<span style="color:#009B37">{}</span>'
         ("Váš nákup doručíme přibližně za minutu.", 1),
         (f"Váš nákup doručíme přibližně za {HIGHLIGHT.format('2 minuty')}.", 2),
         (f"Váš nákup doručíme přibližně za {HIGHLIGHT.format(3)} minuty.", 3),
+        ("Váš nákup doručíme přibližně za&nbsp;2&nbsp;minuty.", 2),
+        ("Váš nákup doručíme přibližně za\u00a02 minuty.", 2),
+        ("Váš nákup doručíme přibližně za 2–3 minuty.", 2),
+        ("Váš nákup doručíme přibližně\\nza 5 minut.", 5),
     ],
 )
 def test_minutes_until_delivery(content: str, minutes: int) -> None:
@@ -36,6 +40,8 @@ def test_minutes_until_delivery(content: str, minutes: int) -> None:
     [
         "Váš nákup doručíme přibližně za 10 minut, tedy v 10:11.",
         f"Váš nákup doručíme přibližně za 10 minut, tedy v {HIGHLIGHT.format('10:11')}.",
+        f"Váš nákup doručíme přibližně za {HIGHLIGHT.format(10)} minut, "
+        f"tedy v {HIGHLIGHT.format('10:11')}.",
     ],
 )
 def test_clock_time_wins_over_minute_count(content: str) -> None:
@@ -45,18 +51,22 @@ def test_clock_time_wins_over_minute_count(content: str) -> None:
     )
 
 
-def test_clock_time_is_relative_to_reference_time() -> None:
-    """A clock time is resolved against when the announcement was received.
-
-    Once the ETA has passed, re-parsing the same announcement must not roll it
-    over to the next day.
-    """
+@pytest.mark.parametrize(
+    ("received_at", "expected"),
+    [
+        # Received before the ETA.
+        (datetime(2026, 9, 20, 10, 0, tzinfo=PRAGUE), datetime(2026, 9, 20, 10, 4, tzinfo=PRAGUE)),
+        # Re-read after the ETA passed (late courier, restart): still today.
+        (datetime(2026, 9, 20, 10, 50, tzinfo=PRAGUE), datetime(2026, 9, 20, 10, 4, tzinfo=PRAGUE)),
+        # Long past: the time refers to tomorrow.
+        (datetime(2026, 9, 20, 20, 0, tzinfo=PRAGUE), datetime(2026, 9, 21, 10, 4, tzinfo=PRAGUE)),
+    ],
+)
+def test_clock_time_day_resolution(received_at: datetime, expected: datetime) -> None:
+    """A bare clock time is placed on the reference day unless clearly passed."""
     content = f"Doručíme v {HIGHLIGHT.format('10:04')}"
-    received_at = datetime(2026, 9, 20, 10, 0, tzinfo=PRAGUE)
 
-    assert extract_delivery_datetime(content, received_at) == datetime(
-        2026, 9, 20, 10, 4, tzinfo=PRAGUE
-    )
+    assert extract_delivery_datetime(content, received_at) == expected
 
 
 def test_date_and_time() -> None:

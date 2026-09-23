@@ -9,12 +9,13 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
 
 from .const import DOMAIN
@@ -401,6 +402,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self._client = RohlikAPI(self._username, self._password, session=self._session)
         self._order_store: OrderStore | None = None
         self._last_refresh: datetime | None = None
+        # When each delivery announcement (keyed by order ID and text) was first
+        # received; see announcement_received_at().
+        self._announcement_arrivals: dict[tuple[str, str], datetime] = {}
         # _store_lock guards brief in-memory store mutations (contended by the
         # refresh cycle). _enrich_lock serializes whole enrichment runs and may
         # be held across network I/O without blocking the refresh.
@@ -465,6 +469,44 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     def last_refresh(self) -> datetime | None:
         """Timestamp of the last data fetch from the API."""
         return self._last_refresh
+
+    @staticmethod
+    def _announcement_key(announcement: dict) -> tuple[str, str]:
+        return str(announcement.get("id")), announcement.get("content") or ""
+
+    @callback
+    def async_update_listeners(self) -> None:
+        """Record newly arrived delivery announcements, then notify entities."""
+        self._track_announcement_arrivals()
+        super().async_update_listeners()
+
+    @callback
+    def _track_announcement_arrivals(self) -> None:
+        """Remember when each current delivery announcement was first received.
+
+        Entries for announcements that are no longer present are dropped, so a
+        later announcement that repeats the same text starts a fresh clock.
+        """
+        announcements = (
+            ((self.data or {}).get("delivery_announcements") or {}).get("data") or {}
+        ).get("announcements") or []
+        now = dt_util.now()
+        arrivals: dict[tuple[str, str], datetime] = {}
+        for announcement in announcements:
+            key = self._announcement_key(announcement)
+            arrivals[key] = self._announcement_arrivals.get(key, now)
+        self._announcement_arrivals = arrivals
+
+    def announcement_received_at(self, announcement: dict) -> datetime:
+        """Return when a delivery announcement's current text was first received.
+
+        A relative announcement ("za 2 minuty") counts from the moment it was
+        received. Parsing the same unchanged text against the current time on
+        every refresh would push the ETA later with each poll, so the reference
+        time only moves when Rohlík sends a different text.
+        """
+        key = self._announcement_key(announcement)
+        return self._announcement_arrivals.get(key) or dt_util.now()
 
     async def _async_update_data(self) -> dict:
         """Fetch data from the Rohlik API (called by the coordinator)."""
