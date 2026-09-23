@@ -1,4 +1,6 @@
+import codecs
 from datetime import timedelta, datetime, time
+import html
 import json
 from zoneinfo import ZoneInfo
 import re
@@ -40,122 +42,116 @@ def calculate_current_month_orders_total(orders: list) -> float|None:
         return None
 
 
-def extract_delivery_datetime(text: str) -> datetime | None:
+# "za 2 minuty" / "za 10 minut" / "za 1 minutu" / "za cca 5 minut" /
+# "za 2-3 minuty" / "za 2 až 3 minuty" (Czech plural forms, an optional
+# approximation word, ranges resolve to their lower bound), or the numberless
+# "za minutu". Anchored on "za" so a clock time such as "10:11" can never be read
+# as a minute count; only known approximation words may follow it, so "za
+# zpoždění 15 minut" (sorry for the 15 minute delay) is not a countdown.
+_MINUTES_UNTIL_PATTERN = re.compile(
+    r'\bza\s+(?:(?:přibližně|zhruba|asi|cca\.?|necelé|necelých)\s+)?'
+    r'(?:(\d{1,3})(?:\s*(?:[-–]|až)\s*\d{1,3})?\s*(?:minut|min\b)|minutu\b)',
+    re.IGNORECASE,
+)
+
+# Highlighted date ("26.4.") and clock time ("08:00"), and any clock time.
+_HIGHLIGHTED_DATE_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
+_HIGHLIGHTED_TIME_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
+_PLAIN_TIME_PATTERN = re.compile(r'\b([0-9]{1,2}:[0-9]{2})\b')
+
+# Literal backslash escapes (\u010d, \xa0, \n, ...) in a double-encoded payload.
+_ESCAPE_PATTERN = re.compile(r'\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[nrt"\'\\])')
+
+# A highlighted ETA up to this far in the past still refers to today (a late
+# courier, or an announcement re-read after a restart); anything earlier is
+# tomorrow's.
+_PASSED_TIME_GRACE = timedelta(hours=1)
+
+
+def _resolve_clock_time(
+    hour: int, minute: int, received_at: datetime, grace: timedelta = timedelta(0)
+) -> datetime:
+    """Place a bare HH:MM on the day received, or the next day if it has passed."""
+    delivery_dt = datetime.combine(received_at.date(), time(hour, minute), tzinfo=received_at.tzinfo)
+    if delivery_dt < received_at - grace:
+        tomorrow = received_at.date() + timedelta(days=1)
+        delivery_dt = datetime.combine(tomorrow, time(hour, minute), tzinfo=received_at.tzinfo)
+    return delivery_dt
+
+
+def extract_delivery_datetime(text: str, received_at: datetime | None = None) -> datetime | None:
     """
     Extract delivery time information from various formatted strings and return a datetime object.
 
-    Handles three types of delivery messages:
-    1. Time only (HH:MM): "delivery at 17:23"
-    2. Date and time: "delivery on 26.4. at 08:00"
+    Handles three types of delivery messages, in this order of preference:
+    1. Highlighted date and time: "delivery on 26.4. at 08:00"
+    2. Highlighted time only (HH:MM): "delivery at 17:23"
     3. Minutes until delivery: "delivery in approximately 3 minutes"
+    Any other HH:MM mentioned in the text is used as a last resort.
 
     Args:
         text: HTML text containing delivery time information
+        received_at: When the announcement was received. Relative ("in 3
+            minutes") messages are counted from it, but never resolve to a time
+            already past (an overdue courier is due now), and clock times are
+            placed on its day. Defaults to the current time.
 
     Returns:
         A timezone-aware datetime object representing the delivery time, or None if no valid time found
     """
 
-    # Replace Unicode escape sequences
-    clean_text: str = text.encode('utf-8').decode('unicode_escape')
+    # Decode literal backslash escapes. The text normally arrives already
+    # decoded from JSON, so non-ASCII characters (Czech diacritics) must be left
+    # untouched rather than round-tripped through the unicode_escape codec.
+    clean_text: str = _ESCAPE_PATTERN.sub(
+        lambda m: codecs.decode(m.group(0), 'unicode_escape'), text
+    )
 
-    # Get plain text without HTML tags for pattern detection
-    plain_text: str = re.sub(r'<[^>]+>', '', clean_text)
+    # Get plain text without HTML tags or entities (&nbsp;) for pattern detection
+    plain_text: str = html.unescape(re.sub(r'<[^>]+>', '', clean_text))
 
     prague_tz = ZoneInfo('Europe/Prague')
     now = datetime.now(tz=prague_tz)
-    current_year: int = now.year
+    received_at = received_at.astimezone(prague_tz) if received_at is not None else now
 
-    # Check for Type 3: Minutes until delivery
-    if re.search(r'(přibližně za|za)\s*.*\s*(minut|minuty|min)', plain_text, re.IGNORECASE):
-        # Extract number of minutes from highlighted span
-        minutes_pattern: re.Pattern = re.compile(r'<span[^>]*color:[^>]*>([0-9]+)</span>')
-
-        matches = re.finditer(minutes_pattern, clean_text)
-        minutes_matches: list[str] = [match.group(1) for match in matches]
-
-        if minutes_matches:
-            try:
-                minutes: int = int(minutes_matches[0])
-                # Calculate the estimated delivery time
-                return now + timedelta(minutes=minutes)
-            except ValueError:
-                pass
-
-    # Check for Type 2: Date and time
-    date_pattern = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
-    time_pattern = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
-
-    matches_date = re.finditer(date_pattern, clean_text)
-    date_matches = [match.group(1) for match in matches_date]
-
-    matches_time = re.finditer(time_pattern, clean_text)
-    time_matches = [match.group(1) for match in matches_time]
+    # Type 1: Date and time
+    date_matches = _HIGHLIGHTED_DATE_PATTERN.findall(clean_text)
+    time_matches = _HIGHLIGHTED_TIME_PATTERN.findall(clean_text)
 
     if date_matches and time_matches:
-        # We have both date and time
         try:
-            date_str: str = date_matches[0]  # e.g., "26.4."
-            day, month = map(int, date_str.replace('.', ' ').split())
-
-            time_str: str = time_matches[0]  # e.g., "08:00"
-            hour, minute = map(int, time_str.split(':'))
-
-            # Create full delivery datetime
-            delivery_dt = datetime(
-                current_year, month, day, hour, minute,
-                tzinfo=prague_tz
-            )
-
+            day, month = map(int, date_matches[0].replace('.', ' ').split())  # e.g. "26.4."
+            hour, minute = map(int, time_matches[0].split(':'))  # e.g. "08:00"
+            delivery_dt = datetime(received_at.year, month, day, hour, minute, tzinfo=prague_tz)
+            if delivery_dt < received_at - timedelta(days=180):
+                # Announced in December for early January.
+                delivery_dt = delivery_dt.replace(year=received_at.year + 1)
             return delivery_dt
         except (ValueError, IndexError):
             pass
 
-    # Check for Type 1: Time only
+    # Type 2: Highlighted time only
     if time_matches:
         try:
-            time_str: str = time_matches[0]  # e.g., "17:23"
-            hour, minute = map(int, time_str.split(':'))
-
-            # Use today's date with the specified time
-            today = now.date()
-
-            # If the time has already passed today, it might refer to tomorrow
-            delivery_dt = datetime.combine(today, time(hour, minute))
-            delivery_dt = delivery_dt.replace(tzinfo=prague_tz)
-
-            if delivery_dt < now:
-                # Time already passed today, assume it's for tomorrow
-                tomorrow = today + timedelta(days=1)
-                delivery_dt = datetime.combine(tomorrow, time(hour, minute))
-                delivery_dt = delivery_dt.replace(tzinfo=prague_tz)
-
-            return delivery_dt
-        except (ValueError, IndexError):
+            hour, minute = map(int, time_matches[0].split(':'))  # e.g. "17:23"
+            return _resolve_clock_time(hour, minute, received_at, _PASSED_TIME_GRACE)
+        except ValueError:
             pass
 
-    # If no structured time information was found, try to extract any time mention
-    # Generic time pattern search in the plain text
-    plain_time_matches = re.findall(r'\b([0-9]{1,2}:[0-9]{2})\b', plain_text)
+    # Type 3: Minutes until delivery, e.g. the short "Váš nákup doručíme
+    # přibližně za 2 minuty." sent during the final approach without a clock time
+    minutes_match = _MINUTES_UNTIL_PATTERN.search(plain_text)
+    if minutes_match:
+        minutes = int(minutes_match.group(1)) if minutes_match.group(1) else 1
+        return max(received_at + timedelta(minutes=minutes), now)
+
+    # Last resort: any time mention in the plain text
+    plain_time_matches = _PLAIN_TIME_PATTERN.findall(plain_text)
     if plain_time_matches:
         try:
-            time_str: str = plain_time_matches[0]
-            hour, minute = map(int, time_str.split(':'))
-
-            # Use today's date with the specified time
-            today = now.date()
-
-            delivery_dt = datetime.combine(today, time(hour, minute))
-            delivery_dt = delivery_dt.replace(tzinfo=prague_tz)
-
-            # If the time has already passed today, it might refer to tomorrow
-            if delivery_dt < now:
-                tomorrow = today + timedelta(days=1)
-                delivery_dt = datetime.combine(tomorrow, time(hour, minute))
-                delivery_dt = delivery_dt.replace(tzinfo=prague_tz)
-
-            return delivery_dt
-        except (ValueError, IndexError):
+            hour, minute = map(int, plain_time_matches[0].split(':'))
+            return _resolve_clock_time(hour, minute, received_at)
+        except ValueError:
             pass
 
     # No valid time information found

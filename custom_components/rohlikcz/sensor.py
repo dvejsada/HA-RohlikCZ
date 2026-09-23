@@ -107,7 +107,10 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
         """ Get extra state attributes. """
         delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
         if len(delivery_info) > 0:
-            delivery_time = extract_delivery_datetime(delivery_info[0].get("content", ""))
+            delivery_time = extract_delivery_datetime(
+                delivery_info[0].get("content", ""),
+                self._rohlik_account.announcement_received_at(delivery_info[0]),
+            )
 
             if delivery_info[0].get("additionalContent", None):
                 clean_text = delivery_info[0]["additionalContent"]
@@ -294,7 +297,10 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                 or str(announcement.get("id", "")) == str(earliest_order.get("id", ""))
             )
             if announcement_matches_soonest:
-                delivery_time = extract_delivery_datetime(announcement.get("content", ""))
+                delivery_time = extract_delivery_datetime(
+                    announcement.get("content", ""),
+                    self._rohlik_account.announcement_received_at(announcement),
+                )
                 if delivery_time is not None:
                     self._last_value = delivery_time
                     self._last_live_value = delivery_time

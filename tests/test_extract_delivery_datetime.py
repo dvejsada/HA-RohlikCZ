@@ -1,0 +1,150 @@
+"""Tests for parsing the delivery ETA out of Rohlík's delivery announcement."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from custom_components.rohlikcz.utils import extract_delivery_datetime
+
+PRAGUE = ZoneInfo("Europe/Prague")
+RECEIVED_AT = datetime(2026, 9, 20, 10, 3, 36, tzinfo=PRAGUE)
+HIGHLIGHT = '<span style="color:#009B37">{}</span>'
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock(freezer) -> None:
+    """Run each parse at the moment the announcement is received."""
+    freezer.move_to(RECEIVED_AT)
+
+
+@pytest.mark.parametrize(
+    ("content", "minutes"),
+    [
+        ("Váš nákup doručíme přibližně za 2 minuty.", 2),
+        ("Váš nákup doručíme přibližně za 9 minut.", 9),
+        ("Váš nákup doručíme přibližně za 1 minutu.", 1),
+        ("Váš nákup doručíme přibližně za minutu.", 1),
+        (f"Váš nákup doručíme přibližně za {HIGHLIGHT.format('2 minuty')}.", 2),
+        (f"Váš nákup doručíme přibližně za {HIGHLIGHT.format(3)} minuty.", 3),
+        ("Váš nákup doručíme přibližně za&nbsp;2&nbsp;minuty.", 2),
+        ("Váš nákup doručíme přibližně za\u00a02 minuty.", 2),
+        ("Váš nákup doručíme přibližně za 2–3 minuty.", 2),
+        ("Váš nákup doručíme přibližně\\nza 5 minut.", 5),
+        ("Kurýr dorazí za přibližně 5 minut.", 5),
+        ("Doručíme za cca 5 minut.", 5),
+        ("Doručíme za 2 až 3 minuty.", 2),
+        # A minute countdown beats an unhighlighted time mentioned alongside it.
+        ("Doručíme za 5 minut (okno 10:00–11:00).", 5),
+    ],
+)
+def test_minutes_until_delivery(content: str, minutes: int) -> None:
+    """The short announcement without a clock time yields a relative ETA."""
+    assert extract_delivery_datetime(content, RECEIVED_AT) == RECEIVED_AT + timedelta(
+        minutes=minutes
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        f"Váš nákup doručíme přibližně za 10 minut, tedy v {HIGHLIGHT.format('10:11')}.",
+        f"Váš nákup doručíme přibližně za {HIGHLIGHT.format(10)} minut, "
+        f"tedy v {HIGHLIGHT.format('10:11')}.",
+    ],
+)
+def test_clock_time_wins_over_minute_count(content: str) -> None:
+    """The long announcement keeps using its exact clock time."""
+    assert extract_delivery_datetime(content, RECEIVED_AT) == datetime(
+        2026, 9, 20, 10, 11, tzinfo=PRAGUE
+    )
+
+
+@pytest.mark.parametrize(
+    ("received_at", "expected"),
+    [
+        # Received before the ETA.
+        (datetime(2026, 9, 20, 10, 0, tzinfo=PRAGUE), datetime(2026, 9, 20, 10, 4, tzinfo=PRAGUE)),
+        # Re-read after the ETA passed (late courier, restart): still today.
+        (datetime(2026, 9, 20, 10, 50, tzinfo=PRAGUE), datetime(2026, 9, 20, 10, 4, tzinfo=PRAGUE)),
+        # Long past: the time refers to tomorrow.
+        (datetime(2026, 9, 20, 20, 0, tzinfo=PRAGUE), datetime(2026, 9, 21, 10, 4, tzinfo=PRAGUE)),
+    ],
+)
+def test_clock_time_day_resolution(received_at: datetime, expected: datetime) -> None:
+    """A bare clock time is placed on the reference day unless clearly passed."""
+    content = f"Doručíme v {HIGHLIGHT.format('10:04')}"
+
+    assert extract_delivery_datetime(content, received_at) == expected
+
+
+def test_date_and_time() -> None:
+    """A date plus time announcement is unaffected."""
+    content = f"Doručíme {HIGHLIGHT.format('21.9.')} v {HIGHLIGHT.format('08:00')}"
+
+    assert extract_delivery_datetime(content, RECEIVED_AT) == datetime(
+        2026, 9, 21, 8, 0, tzinfo=PRAGUE
+    )
+
+
+def test_plain_clock_time_is_last_resort() -> None:
+    """An unhighlighted time is used when nothing else matches."""
+    assert extract_delivery_datetime("Doručíme v 10:11.", RECEIVED_AT) == datetime(
+        2026, 9, 20, 10, 11, tzinfo=PRAGUE
+    )
+
+
+def test_plain_past_clock_time_is_tomorrow() -> None:
+    """An unhighlighted time gets no grace: once passed, it is tomorrow's."""
+    assert extract_delivery_datetime(
+        "Objednávka přijata v 9:40, doručíme co nejdříve", RECEIVED_AT
+    ) == datetime(2026, 9, 21, 9, 40, tzinfo=PRAGUE)
+
+
+def test_za_in_other_sense_is_not_a_countdown() -> None:
+    """"za" followed by other words (an apology for a delay) is not a countdown."""
+    assert extract_delivery_datetime(
+        "Omlouváme se za zpoždění 15 minut, doručíme v 10:30.", RECEIVED_AT
+    ) == datetime(2026, 9, 20, 10, 30, tzinfo=PRAGUE)
+
+
+def test_overdue_countdown_is_due_now(freezer) -> None:
+    """A countdown that has run out while unchanged resolves to now, not the past."""
+    freezer.move_to(RECEIVED_AT + timedelta(minutes=10))
+
+    assert extract_delivery_datetime(
+        "Váš nákup doručíme přibližně za 2 minuty.", RECEIVED_AT
+    ) == RECEIVED_AT + timedelta(minutes=10)
+
+
+def test_date_after_new_year() -> None:
+    """A date announced in late December for early January is next year's."""
+    content = f"Doručíme {HIGHLIGHT.format('1.1.')} v {HIGHLIGHT.format('08:00')}"
+    received_at = datetime(2026, 12, 31, 22, 0, tzinfo=PRAGUE)
+
+    assert extract_delivery_datetime(content, received_at) == datetime(
+        2027, 1, 1, 8, 0, tzinfo=PRAGUE
+    )
+
+
+def test_literal_unicode_escapes_are_decoded() -> None:
+    """Literal \\uXXXX escapes are still decoded before matching."""
+    content = "Doru\\u010d\\u00edme p\\u0159ibli\\u017en\\u011b za 4 minuty."
+
+    assert extract_delivery_datetime(content, RECEIVED_AT) == RECEIVED_AT + timedelta(
+        minutes=4
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "Kurýr je u vás.",
+        "Objednávku připravujeme.",
+        "",
+    ],
+)
+def test_no_eta(content: str) -> None:
+    """Announcements without any time information yield None."""
+    assert extract_delivery_datetime(content, RECEIVED_AT) is None
