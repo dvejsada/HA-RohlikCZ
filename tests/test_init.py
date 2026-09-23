@@ -256,6 +256,7 @@ async def test_update_delivery_times_updates_delivery_time_sensor(hass: HomeAssi
     assert hass.states.get(delivery_time_id).state == "unknown"
 
     account = entry.runtime_data
+    delivery_day = datetime.now(ZoneInfo("Europe/Prague")) + timedelta(days=1)
     fresh_announcements = {
         "data": {
             "announcements": [
@@ -264,7 +265,7 @@ async def test_update_delivery_times_updates_delivery_time_sensor(hass: HomeAssi
                     "title": "Delivery",
                     "updatedAt": "2026-04-26T07:30:00+02:00",
                     "content": (
-                        'Doručíme <span style="color:#009B37">26.4.</span>'
+                        f'Doručíme <span style="color:#009B37">{delivery_day.day}.{delivery_day.month}.</span>'
                         ' v <span style="color:#009B37">08:00</span>'
                     ),
                 }
@@ -280,7 +281,8 @@ async def test_update_delivery_times_updates_delivery_time_sensor(hass: HomeAssi
     assert account.data["delivery_announcements"] == fresh_announcements
     state = hass.states.get(delivery_time_id).state
     assert dt_util.parse_datetime(state) == datetime(
-        datetime.now().year, 4, 26, 8, 0, tzinfo=ZoneInfo("Europe/Prague")
+        delivery_day.year, delivery_day.month, delivery_day.day, 8, 0,
+        tzinfo=ZoneInfo("Europe/Prague"),
     )
     # Other data is untouched.
     assert account.data["login"]["data"]["user"]["id"] == 123456

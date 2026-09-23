@@ -26,6 +26,11 @@ HIGHLIGHT = '<span style="color:#009B37">{}</span>'
         ("Váš nákup doručíme přibližně za\u00a02 minuty.", 2),
         ("Váš nákup doručíme přibližně za 2–3 minuty.", 2),
         ("Váš nákup doručíme přibližně\\nza 5 minut.", 5),
+        ("Kurýr dorazí za přibližně 5 minut.", 5),
+        ("Doručíme za cca 5 minut.", 5),
+        ("Doručíme za 2 až 3 minuty.", 2),
+        # A minute countdown beats an unhighlighted time mentioned alongside it.
+        ("Doručíme za 5 minut (okno 10:00–11:00).", 5),
     ],
 )
 def test_minutes_until_delivery(content: str, minutes: int) -> None:
@@ -38,7 +43,6 @@ def test_minutes_until_delivery(content: str, minutes: int) -> None:
 @pytest.mark.parametrize(
     "content",
     [
-        "Váš nákup doručíme přibližně za 10 minut, tedy v 10:11.",
         f"Váš nákup doručíme přibližně za 10 minut, tedy v {HIGHLIGHT.format('10:11')}.",
         f"Váš nákup doručíme přibližně za {HIGHLIGHT.format(10)} minut, "
         f"tedy v {HIGHLIGHT.format('10:11')}.",
@@ -75,6 +79,23 @@ def test_date_and_time() -> None:
 
     assert extract_delivery_datetime(content, RECEIVED_AT) == datetime(
         2026, 9, 21, 8, 0, tzinfo=PRAGUE
+    )
+
+
+def test_plain_clock_time_is_last_resort() -> None:
+    """An unhighlighted time is used when nothing else matches."""
+    assert extract_delivery_datetime("Doručíme v 10:11.", RECEIVED_AT) == datetime(
+        2026, 9, 20, 10, 11, tzinfo=PRAGUE
+    )
+
+
+def test_date_after_new_year() -> None:
+    """A date announced in late December for early January is next year's."""
+    content = f"Doručíme {HIGHLIGHT.format('1.1.')} v {HIGHLIGHT.format('08:00')}"
+    received_at = datetime(2026, 12, 31, 22, 0, tzinfo=PRAGUE)
+
+    assert extract_delivery_datetime(content, received_at) == datetime(
+        2027, 1, 1, 8, 0, tzinfo=PRAGUE
     )
 
 

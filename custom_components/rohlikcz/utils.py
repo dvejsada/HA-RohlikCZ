@@ -42,14 +42,21 @@ def calculate_current_month_orders_total(orders: list) -> float|None:
         return None
 
 
-# "za 2 minuty" / "za 10 minut" / "za 1 minutu" / "za 2-3 minuty" (Czech plural
-# forms, ranges resolve to their lower bound), or the numberless "za minutu".
-# Anchored on "za" so a clock time such as "10:11" can never be read as a minute
-# count.
+# "za 2 minuty" / "za 10 minut" / "za 1 minutu" / "za cca 5 minut" /
+# "za 2-3 minuty" / "za 2 až 3 minuty" (Czech plural forms, up to two words
+# before the number, ranges resolve to their lower bound), or the numberless
+# "za minutu". Anchored on "za" so a clock time such as "10:11" can never be read
+# as a minute count.
 _MINUTES_UNTIL_PATTERN = re.compile(
-    r'\bza\s+(?:(\d{1,3})(?:\s*[-–]\s*\d{1,3})?\s*(?:minut|min\b)|minutu\b)',
+    r'\bza\s+(?:[^\W\d_]+\.?\s+){0,2}?'
+    r'(?:(\d{1,3})(?:\s*(?:[-–]|až)\s*\d{1,3})?\s*(?:minut|min\b)|minutu\b)',
     re.IGNORECASE,
 )
+
+# Highlighted date ("26.4.") and clock time ("08:00"), and any clock time.
+_HIGHLIGHTED_DATE_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
+_HIGHLIGHTED_TIME_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
+_PLAIN_TIME_PATTERN = re.compile(r'\b([0-9]{1,2}:[0-9]{2})\b')
 
 # Literal backslash escapes (\u010d, \xa0, \n, ...) in a double-encoded payload.
 _ESCAPE_PATTERN = re.compile(r'\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[nrt"\'\\])')
@@ -72,10 +79,11 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
     """
     Extract delivery time information from various formatted strings and return a datetime object.
 
-    Handles three types of delivery messages, preferring an exact clock time:
-    1. Date and time: "delivery on 26.4. at 08:00"
-    2. Time only (HH:MM): "delivery at 17:23"
+    Handles three types of delivery messages, in this order of preference:
+    1. Highlighted date and time: "delivery on 26.4. at 08:00"
+    2. Highlighted time only (HH:MM): "delivery at 17:23"
     3. Minutes until delivery: "delivery in approximately 3 minutes"
+    Any other HH:MM mentioned in the text is used as a last resort.
 
     Args:
         text: HTML text containing delivery time information
@@ -101,27 +109,28 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
     now = now.astimezone(prague_tz) if now is not None else datetime.now(tz=prague_tz)
 
     # Type 1: Date and time
-    date_pattern = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
-    time_pattern = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
-
-    date_matches = date_pattern.findall(clean_text)
-    time_matches = time_pattern.findall(clean_text)
+    date_matches = _HIGHLIGHTED_DATE_PATTERN.findall(clean_text)
+    time_matches = _HIGHLIGHTED_TIME_PATTERN.findall(clean_text)
 
     if date_matches and time_matches:
         try:
             day, month = map(int, date_matches[0].replace('.', ' ').split())  # e.g. "26.4."
             hour, minute = map(int, time_matches[0].split(':'))  # e.g. "08:00"
-            return datetime(now.year, month, day, hour, minute, tzinfo=prague_tz)
+            delivery_dt = datetime(now.year, month, day, hour, minute, tzinfo=prague_tz)
+            if delivery_dt < now - timedelta(days=180):
+                # Announced in December for early January.
+                delivery_dt = delivery_dt.replace(year=now.year + 1)
+            return delivery_dt
         except (ValueError, IndexError):
             pass
 
-    # Type 2: Time only, highlighted first, then any time mention in the plain text
-    for time_str in (*time_matches[:1], *re.findall(r'\b([0-9]{1,2}:[0-9]{2})\b', plain_text)[:1]):
+    # Type 2: Highlighted time only
+    if time_matches:
         try:
-            hour, minute = map(int, time_str.split(':'))  # e.g. "17:23"
+            hour, minute = map(int, time_matches[0].split(':'))  # e.g. "17:23"
             return _resolve_clock_time(hour, minute, now)
         except ValueError:
-            continue
+            pass
 
     # Type 3: Minutes until delivery, e.g. the short "Váš nákup doručíme
     # přibližně za 2 minuty." sent during the final approach without a clock time
@@ -129,6 +138,15 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
     if minutes_match:
         minutes = int(minutes_match.group(1)) if minutes_match.group(1) else 1
         return now + timedelta(minutes=minutes)
+
+    # Last resort: any time mention in the plain text
+    plain_time_matches = _PLAIN_TIME_PATTERN.findall(plain_text)
+    if plain_time_matches:
+        try:
+            hour, minute = map(int, plain_time_matches[0].split(':'))
+            return _resolve_clock_time(hour, minute, now)
+        except ValueError:
+            pass
 
     # No valid time information found
     return None

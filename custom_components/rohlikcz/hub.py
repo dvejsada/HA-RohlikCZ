@@ -402,9 +402,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self._client = RohlikAPI(self._username, self._password, session=self._session)
         self._order_store: OrderStore | None = None
         self._last_refresh: datetime | None = None
-        # When each delivery announcement (keyed by order ID and text) was first
-        # received; see announcement_received_at().
-        self._announcement_arrivals: dict[tuple[str, str], datetime] = {}
+        # When each delivery announcement (keyed by order ID, text and Rohlík's
+        # updatedAt) was first received; see announcement_received_at().
+        self._announcement_arrivals: dict[tuple[str, str, str], datetime] = {}
         # _store_lock guards brief in-memory store mutations (contended by the
         # refresh cycle). _enrich_lock serializes whole enrichment runs and may
         # be held across network I/O without blocking the refresh.
@@ -471,8 +471,14 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         return self._last_refresh
 
     @staticmethod
-    def _announcement_key(announcement: dict) -> tuple[str, str]:
-        return str(announcement.get("id")), announcement.get("content") or ""
+    def _announcement_key(announcement: dict) -> tuple[str, str, str]:
+        # updatedAt is part of the key so a text Rohlík re-issues unchanged
+        # (e.g. a delayed courier) counts from its new arrival.
+        return (
+            str(announcement.get("id")),
+            announcement.get("content") or "",
+            str(announcement.get("updatedAt")),
+        )
 
     @callback
     def async_update_listeners(self) -> None:
@@ -491,7 +497,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             ((self.data or {}).get("delivery_announcements") or {}).get("data") or {}
         ).get("announcements") or []
         now = dt_util.now()
-        arrivals: dict[tuple[str, str], datetime] = {}
+        arrivals: dict[tuple[str, str, str], datetime] = {}
         for announcement in announcements:
             key = self._announcement_key(announcement)
             arrivals[key] = self._announcement_arrivals.get(key, now)
