@@ -365,10 +365,10 @@ async def test_repeated_announcement_after_clearing_restarts_count(
     ).replace(microsecond=0)
 
 
-async def test_reissued_announcement_restarts_count(
+async def test_overdue_minutes_announcement_is_due_now(
     hass: HomeAssistant, freezer
 ) -> None:
-    """The same text re-issued with a new updatedAt counts from its arrival."""
+    """An unchanged countdown that has run out reports now, not a past ETA."""
     _, slot_start = _delivery_times()
     data = sample_api_data()
     data["next_order"] = [_order(7001, slot_start)]
@@ -379,12 +379,6 @@ async def test_reissued_announcement_restarts_count(
     entry, entity_id = await _setup_delivery_time(hass, data)
 
     freezer.tick(timedelta(minutes=5))
-    reissued_data = copy.deepcopy(data)
-    reissued_data["delivery_announcements"]["data"]["announcements"][0][
-        "updatedAt"
-    ] = dt_util.now().isoformat()
-    entry.runtime_data.async_set_updated_data(reissued_data)
+    entry.runtime_data.async_set_updated_data(copy.deepcopy(data))
     await hass.async_block_till_done()
-    assert _state_time(hass, entity_id) == (
-        dt_util.now() + timedelta(minutes=2)
-    ).replace(microsecond=0)
+    assert _state_time(hass, entity_id) == dt_util.now().replace(microsecond=0)

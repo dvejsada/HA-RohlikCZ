@@ -43,12 +43,13 @@ def calculate_current_month_orders_total(orders: list) -> float|None:
 
 
 # "za 2 minuty" / "za 10 minut" / "za 1 minutu" / "za cca 5 minut" /
-# "za 2-3 minuty" / "za 2 až 3 minuty" (Czech plural forms, up to two words
-# before the number, ranges resolve to their lower bound), or the numberless
+# "za 2-3 minuty" / "za 2 až 3 minuty" (Czech plural forms, an optional
+# approximation word, ranges resolve to their lower bound), or the numberless
 # "za minutu". Anchored on "za" so a clock time such as "10:11" can never be read
-# as a minute count.
+# as a minute count; only known approximation words may follow it, so "za
+# zpoždění 15 minut" (sorry for the 15 minute delay) is not a countdown.
 _MINUTES_UNTIL_PATTERN = re.compile(
-    r'\bza\s+(?:[^\W\d_]+\.?\s+){0,2}?'
+    r'\bza\s+(?:(?:přibližně|zhruba|asi|cca\.?|necelé|necelých)\s+)?'
     r'(?:(\d{1,3})(?:\s*(?:[-–]|až)\s*\d{1,3})?\s*(?:minut|min\b)|minutu\b)',
     re.IGNORECASE,
 )
@@ -61,21 +62,24 @@ _PLAIN_TIME_PATTERN = re.compile(r'\b([0-9]{1,2}:[0-9]{2})\b')
 # Literal backslash escapes (\u010d, \xa0, \n, ...) in a double-encoded payload.
 _ESCAPE_PATTERN = re.compile(r'\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[nrt"\'\\])')
 
-# A clock time up to this far in the past still refers to today (a late courier,
-# or an announcement re-read after a restart); anything earlier is tomorrow's.
+# A highlighted ETA up to this far in the past still refers to today (a late
+# courier, or an announcement re-read after a restart); anything earlier is
+# tomorrow's.
 _PASSED_TIME_GRACE = timedelta(hours=1)
 
 
-def _resolve_clock_time(hour: int, minute: int, now: datetime) -> datetime:
-    """Place a bare HH:MM on today, or on tomorrow if it has clearly passed."""
-    delivery_dt = datetime.combine(now.date(), time(hour, minute), tzinfo=now.tzinfo)
-    if delivery_dt < now - _PASSED_TIME_GRACE:
-        tomorrow = now.date() + timedelta(days=1)
-        delivery_dt = datetime.combine(tomorrow, time(hour, minute), tzinfo=now.tzinfo)
+def _resolve_clock_time(
+    hour: int, minute: int, received_at: datetime, grace: timedelta = timedelta(0)
+) -> datetime:
+    """Place a bare HH:MM on the day received, or the next day if it has passed."""
+    delivery_dt = datetime.combine(received_at.date(), time(hour, minute), tzinfo=received_at.tzinfo)
+    if delivery_dt < received_at - grace:
+        tomorrow = received_at.date() + timedelta(days=1)
+        delivery_dt = datetime.combine(tomorrow, time(hour, minute), tzinfo=received_at.tzinfo)
     return delivery_dt
 
 
-def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetime | None:
+def extract_delivery_datetime(text: str, received_at: datetime | None = None) -> datetime | None:
     """
     Extract delivery time information from various formatted strings and return a datetime object.
 
@@ -87,8 +91,9 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
 
     Args:
         text: HTML text containing delivery time information
-        now: Reference time the announcement was received at. Relative
-            ("in 3 minutes") messages are counted from it, and clock times are
+        received_at: When the announcement was received. Relative ("in 3
+            minutes") messages are counted from it, but never resolve to a time
+            already past (an overdue courier is due now), and clock times are
             placed on its day. Defaults to the current time.
 
     Returns:
@@ -106,7 +111,8 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
     plain_text: str = html.unescape(re.sub(r'<[^>]+>', '', clean_text))
 
     prague_tz = ZoneInfo('Europe/Prague')
-    now = now.astimezone(prague_tz) if now is not None else datetime.now(tz=prague_tz)
+    now = datetime.now(tz=prague_tz)
+    received_at = received_at.astimezone(prague_tz) if received_at is not None else now
 
     # Type 1: Date and time
     date_matches = _HIGHLIGHTED_DATE_PATTERN.findall(clean_text)
@@ -116,10 +122,10 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
         try:
             day, month = map(int, date_matches[0].replace('.', ' ').split())  # e.g. "26.4."
             hour, minute = map(int, time_matches[0].split(':'))  # e.g. "08:00"
-            delivery_dt = datetime(now.year, month, day, hour, minute, tzinfo=prague_tz)
-            if delivery_dt < now - timedelta(days=180):
+            delivery_dt = datetime(received_at.year, month, day, hour, minute, tzinfo=prague_tz)
+            if delivery_dt < received_at - timedelta(days=180):
                 # Announced in December for early January.
-                delivery_dt = delivery_dt.replace(year=now.year + 1)
+                delivery_dt = delivery_dt.replace(year=received_at.year + 1)
             return delivery_dt
         except (ValueError, IndexError):
             pass
@@ -128,7 +134,7 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
     if time_matches:
         try:
             hour, minute = map(int, time_matches[0].split(':'))  # e.g. "17:23"
-            return _resolve_clock_time(hour, minute, now)
+            return _resolve_clock_time(hour, minute, received_at, _PASSED_TIME_GRACE)
         except ValueError:
             pass
 
@@ -137,14 +143,14 @@ def extract_delivery_datetime(text: str, now: datetime | None = None) -> datetim
     minutes_match = _MINUTES_UNTIL_PATTERN.search(plain_text)
     if minutes_match:
         minutes = int(minutes_match.group(1)) if minutes_match.group(1) else 1
-        return now + timedelta(minutes=minutes)
+        return max(received_at + timedelta(minutes=minutes), now)
 
     # Last resort: any time mention in the plain text
     plain_time_matches = _PLAIN_TIME_PATTERN.findall(plain_text)
     if plain_time_matches:
         try:
             hour, minute = map(int, plain_time_matches[0].split(':'))
-            return _resolve_clock_time(hour, minute, now)
+            return _resolve_clock_time(hour, minute, received_at)
         except ValueError:
             pass
 

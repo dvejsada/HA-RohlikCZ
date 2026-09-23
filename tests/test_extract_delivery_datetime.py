@@ -13,6 +13,12 @@ RECEIVED_AT = datetime(2026, 9, 20, 10, 3, 36, tzinfo=PRAGUE)
 HIGHLIGHT = '<span style="color:#009B37">{}</span>'
 
 
+@pytest.fixture(autouse=True)
+def _frozen_clock(freezer) -> None:
+    """Run each parse at the moment the announcement is received."""
+    freezer.move_to(RECEIVED_AT)
+
+
 @pytest.mark.parametrize(
     ("content", "minutes"),
     [
@@ -87,6 +93,29 @@ def test_plain_clock_time_is_last_resort() -> None:
     assert extract_delivery_datetime("Doručíme v 10:11.", RECEIVED_AT) == datetime(
         2026, 9, 20, 10, 11, tzinfo=PRAGUE
     )
+
+
+def test_plain_past_clock_time_is_tomorrow() -> None:
+    """An unhighlighted time gets no grace: once passed, it is tomorrow's."""
+    assert extract_delivery_datetime(
+        "Objednávka přijata v 9:40, doručíme co nejdříve", RECEIVED_AT
+    ) == datetime(2026, 9, 21, 9, 40, tzinfo=PRAGUE)
+
+
+def test_za_in_other_sense_is_not_a_countdown() -> None:
+    """"za" followed by other words (an apology for a delay) is not a countdown."""
+    assert extract_delivery_datetime(
+        "Omlouváme se za zpoždění 15 minut, doručíme v 10:30.", RECEIVED_AT
+    ) == datetime(2026, 9, 20, 10, 30, tzinfo=PRAGUE)
+
+
+def test_overdue_countdown_is_due_now(freezer) -> None:
+    """A countdown that has run out while unchanged resolves to now, not the past."""
+    freezer.move_to(RECEIVED_AT + timedelta(minutes=10))
+
+    assert extract_delivery_datetime(
+        "Váš nákup doručíme přibližně za 2 minuty.", RECEIVED_AT
+    ) == RECEIVED_AT + timedelta(minutes=10)
 
 
 def test_date_after_new_year() -> None:
