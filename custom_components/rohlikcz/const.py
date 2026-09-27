@@ -4,35 +4,20 @@ Defining constants for the project.
 from __future__ import annotations
 
 from aiohttp import ClientTimeout
-from dataclasses import dataclass
 from typing import Final
+
+from rohlik_api import SITES, Site
 
 
 HTTP_TIMEOUT: Final = ClientTimeout(total=10)
 DOMAIN = "rohlikcz"
 
 """ Sites """
-
-
-@dataclass(frozen=True)
-class Site:
-    """A Rohlík Group shop. All of them run the same backend API."""
-
-    base_url: str
-    name: str
-    currency: str
-    timezone: str
-
+# The shops (base URL, currency, timezone) come from rohlik-api's SITES, keyed
+# by the same codes stored in config entries: cz, de, at, hu, ro.
 
 CONF_SITE = "site"
 DEFAULT_SITE = "cz"
-SITES: Final[dict[str, Site]] = {
-    "cz": Site("https://www.rohlik.cz", "Rohlík.cz", "CZK", "Europe/Prague"),
-    "de": Site("https://www.knuspr.de", "Knuspr.de", "EUR", "Europe/Berlin"),
-    "at": Site("https://www.gurkerl.at", "Gurkerl.at", "EUR", "Europe/Vienna"),
-    "hu": Site("https://www.kifli.hu", "Kifli.hu", "HUF", "Europe/Budapest"),
-    "ro": Site("https://www.sezamo.ro", "Sezamo.ro", "RON", "Europe/Bucharest"),
-}
 
 
 def get_site(key: str | None) -> Site:

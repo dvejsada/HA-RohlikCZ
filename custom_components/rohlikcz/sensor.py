@@ -1007,10 +1007,15 @@ class CartPriceSensor(MoneySensor):
         """Returns cart details."""
         cart = self._rohlik_account.data.get('cart')
         if cart:
-            return {
+            attrs: dict[str, Any] = {
                 "Total items": cart.total_items,
                 "Can Order": cart.can_make_order,
             }
+            # The shop's minimum order value. "Can Order" is not a minimum
+            # check: it also needs checkout details such as a delivery slot.
+            if cart.minimum_order_price is not None:
+                attrs["Minimum Order Price"] = cart.minimum_order_price
+            return attrs
         return None
 
     @property

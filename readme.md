@@ -117,7 +117,7 @@ Enabling analytics triggers a one-time download of your full order history (this
 | **Credit Balance** | Your current account credit (in the shop's currency) |
 | **Reusable Bags** | Number of reusable bags on your account |
 | **Premium Days Remaining** | Days left in your premium subscription *(premium users only)* |
-| **Cart Total** | Current total value of your shopping cart |
+| **Cart Total** | Current total value of your shopping cart; the `Minimum Order Price` attribute holds the shop's minimum order value (compare it with the total — `Can Order` also needs checkout details such as a delivery slot) |
 | **Last Updated** | Timestamp of the last successful data refresh |
 | **Slot Express Time** | Timestamp of the next available express delivery slot |
 | **Slot Standard Time** | Timestamp of the nearest standard delivery slot |
