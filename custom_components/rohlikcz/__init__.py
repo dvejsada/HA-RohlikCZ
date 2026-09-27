@@ -6,11 +6,12 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN, CONF_ANALYTICS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
-    SERVICE_ADD_TO_CART, CONF_SITE, DEFAULT_SITE,
+    SERVICE_ADD_TO_CART, CONF_SITE, get_site,
 )
 from .hub import RohlikAccount
 from .services import register_services
@@ -41,6 +42,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bo
     analytics = entry.options.get(CONF_ANALYTICS, DEFAULT_ANALYTICS)
     top_n = int(entry.options.get(CONF_TOP_N, DEFAULT_TOP_N))
     hide_discontinued = entry.options.get(CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED)
+    site = entry.data.get(CONF_SITE)
+
+    # Load the shop's timezone off the event loop (reading tzdata is file I/O);
+    # the coordinator then picks it up from the cache.
+    await dt_util.async_get_time_zone(get_site(site).timezone)
 
     rohlik_hub = RohlikAccount(
         hass,
@@ -50,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bo
         top_n=top_n,
         hide_discontinued=hide_discontinued,
         entry=entry,
-        site=entry.data.get(CONF_SITE, DEFAULT_SITE),
+        site=site,
     )
 
     # Performs the first refresh; raises ConfigEntryNotReady on connection

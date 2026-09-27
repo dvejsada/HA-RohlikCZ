@@ -203,6 +203,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(info["user_id"])
+                if entry.unique_id is None:
+                    # Entries from before unique ids existed have nothing to
+                    # compare against: adopt the id unless another entry has it.
+                    self._abort_if_unique_id_configured()
+                    return self.async_update_reload_and_abort(
+                        entry, unique_id=info["user_id"], data=data
+                    )
                 self._abort_if_unique_id_mismatch(reason="wrong_account")
                 return self.async_update_reload_and_abort(entry, data=data)
 

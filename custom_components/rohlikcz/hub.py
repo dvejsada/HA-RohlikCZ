@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
 
-from .const import DEFAULT_SITE, DOMAIN, Site, get_site
+from .const import DOMAIN, Site, get_site
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)
@@ -174,7 +174,7 @@ class OrderStore:
 
         if new_count > 0:
             if not self._data["tracking_since"]:
-                self._data["tracking_since"] = datetime.now(ZoneInfo("Europe/Prague")).isoformat()
+                self._data["tracking_since"] = dt_util.now().isoformat()
             _LOGGER.info(f"Added {new_count} new orders to store. Total: {len(self._data['orders'])}")
 
         return new_count
@@ -383,7 +383,7 @@ class OrderStore:
 class RohlikAccount(DataUpdateCoordinator[dict]):
     """RohlikCZ account modelled as a Home Assistant data update coordinator."""
 
-    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True, entry: ConfigEntry | None = None, site: str = DEFAULT_SITE) -> None:
+    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True, entry: ConfigEntry | None = None, site: str | None = None) -> None:
         """Initialize account info."""
         super().__init__(
             hass,
@@ -395,7 +395,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self._username: str = username
         self._password: str = password
         self._site: Site = get_site(site)
-        self._timezone = ZoneInfo(self._site.timezone)
+        # get_time_zone is cached; async_setup_entry preloads the zone off the
+        # event loop, so this does no file I/O there.
+        self._timezone: ZoneInfo = dt_util.get_time_zone(self._site.timezone)
         # A dedicated, HA-managed aiohttp session (own cookie jar) keeps each
         # account's auth cookies isolated from other integrations and from a
         # second Rohlik account. The client logs in lazily and re-authenticates
@@ -437,11 +439,6 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     def hide_discontinued(self) -> bool:
         """Whether to exclude discontinued products from top N."""
         return self._hide_discontinued
-
-    @property
-    def site(self) -> Site:
-        """The Rohlík Group shop this account belongs to."""
-        return self._site
 
     @property
     def currency(self) -> str:
@@ -537,7 +534,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         except RohlikAPIError as err:
             raise UpdateFailed(str(err)) from err
 
-        self._last_refresh = datetime.now(ZoneInfo("Europe/Prague"))
+        self._last_refresh = datetime.now(self._timezone)
 
         # Initialize order store on first update (only if analytics enabled)
         if self._analytics and not self._order_store and data.get("login"):

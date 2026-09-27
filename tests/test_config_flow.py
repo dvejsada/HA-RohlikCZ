@@ -273,6 +273,31 @@ async def test_reconfigure_wrong_account(hass: HomeAssistant) -> None:
     assert result["reason"] == "wrong_account"
 
 
+async def test_reconfigure_legacy_entry_without_unique_id(hass: HomeAssistant) -> None:
+    """An entry created before unique ids existed can still be reconfigured."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=None,
+        data={CONF_EMAIL: "test@example.com", CONF_PASSWORD: "old"},
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    with patch(
+        "custom_components.rohlikcz.config_flow.validate_input", return_value=VALID
+    ), patch(
+        "custom_components.rohlikcz.async_setup_entry", return_value=True
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_SITE: "de", CONF_PASSWORD: "new-password"}
+        )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.unique_id == VALID["user_id"]
+    assert entry.data[CONF_SITE] == "de"
+
+
 async def test_reauth_wrong_account(hass: HomeAssistant) -> None:
     """Reauth with a different account id aborts with wrong_account."""
     entry = MockConfigEntry(
