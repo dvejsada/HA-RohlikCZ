@@ -14,7 +14,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from rohlik_api import APIRequestFailedError, InvalidCredentialsError
+from rohlik_api import APIRequestFailedError, Cart, CartItem, InvalidCredentialsError
 
 from custom_components.rohlikcz.const import CONF_ANALYTICS, CONF_SITE, DOMAIN
 from custom_components.rohlikcz.hub import OrderStore, RohlikAccount
@@ -105,6 +105,74 @@ async def test_setup_without_site_is_rohlik_cz(hass: HomeAssistant) -> None:
     ent_reg = er.async_get(hass)
     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_cart_price")
     assert hass.states.get(entity_id).attributes["unit_of_measurement"] == "CZK"
+
+
+async def test_cart_minimum_order_price_attribute(hass: HomeAssistant) -> None:
+    """The cart sensor exposes the shop's minimum order value when reported."""
+    data = sample_api_data()
+    data["cart"] = Cart(
+        total_price=250.0,
+        total_items=1,
+        can_make_order=False,
+        products=[],
+        minimum_order_price=299.0,
+        currency="CZK",
+    )
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=data):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_cart_price")
+    attrs = hass.states.get(entity_id).attributes
+    assert attrs["Minimum Order Price"] == 299.0
+    assert attrs["Can Order"] is False
+
+
+async def test_cart_without_minimum_order_price(hass: HomeAssistant) -> None:
+    """No attribute when the API does not report a minimum."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=sample_api_data()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_cart_price")
+    assert "Minimum Order Price" not in hass.states.get(entity_id).attributes
+
+
+async def test_cart_todo_uses_item_currency(hass: HomeAssistant) -> None:
+    """Cart todo items show each line's own currency, else the shop's."""
+    data = sample_api_data()
+    data["cart"] = Cart(
+        total_price=3.5,
+        total_items=2,
+        can_make_order=False,
+        products=[
+            CartItem(id="1", cart_item_id="10", name="Milk", quantity=1, price=1.5, currency="EUR"),
+            CartItem(id="2", cart_item_id="20", name="Bread", quantity=1, price=2.0),
+        ],
+        currency="EUR",
+    )
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=data):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id("todo", DOMAIN, "123456-cart")
+    response = await hass.services.async_call(
+        "todo", "get_items", {"entity_id": entity_id}, blocking=True, return_response=True
+    )
+    summaries = [item["summary"] for item in response[entity_id]["items"]]
+    assert summaries == ["Milk (1) - 1.5 EUR", "Bread (1) - 2.0 CZK"]
 
 
 async def test_czech_language_keeps_kc_unit(hass: HomeAssistant) -> None:

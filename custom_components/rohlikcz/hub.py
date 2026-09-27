@@ -16,9 +16,9 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
-from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
+from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError, Site
 
-from .const import DOMAIN, Site, get_site
+from .const import DOMAIN, get_site
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)

@@ -1,6 +1,8 @@
 """Tests for the Rohlik.cz config and reauth flows."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import SOURCE_USER
@@ -9,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from rohlik_api import InvalidCredentialsError, RohlikAPIError
+from rohlik_api import SITES, InvalidCredentialsError, RohlikAPIError
 
 from custom_components.rohlikcz.config_flow import validate_input
 from custom_components.rohlikcz.const import CONF_SITE, DOMAIN
@@ -317,3 +319,11 @@ async def test_reauth_wrong_account(hass: HomeAssistant) -> None:
         )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "wrong_account"
+
+
+def test_every_site_has_a_translated_option() -> None:
+    """The shop list comes from rohlik-api; each shop needs a selector label."""
+    translations = Path(__file__).parent.parent / "custom_components" / "rohlikcz" / "translations"
+    for path in translations.glob("*.json"):
+        options = json.loads(path.read_text(encoding="utf-8"))["selector"]["site"]["options"]
+        assert set(options) == set(SITES), path.name
