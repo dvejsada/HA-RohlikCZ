@@ -88,6 +88,16 @@ def test_date_and_time() -> None:
     )
 
 
+def test_clock_time_in_shop_timezone() -> None:
+    """Clock times are read in the shop's own timezone (Sezamo.ro: Bucharest)."""
+    bucharest = ZoneInfo("Europe/Bucharest")
+    content = f"Livrăm la {HIGHLIGHT.format('12:30')}"
+
+    assert extract_delivery_datetime(content, RECEIVED_AT, tz=bucharest) == datetime(
+        2026, 9, 20, 12, 30, tzinfo=bucharest
+    )
+
+
 def test_plain_clock_time_is_last_resort() -> None:
     """An unhighlighted time is used when nothing else matches."""
     assert extract_delivery_datetime("Doručíme v 10:11.", RECEIVED_AT) == datetime(

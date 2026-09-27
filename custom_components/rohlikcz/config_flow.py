@@ -19,6 +19,7 @@ import voluptuous as vol
 from .const import (
     DOMAIN, CONF_ANALYTICS, ANALYTICS_OPTIONS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
+    CONF_SITE, DEFAULT_SITE, SITES, get_site,
 )
 from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
 
@@ -31,7 +32,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     Returns the account title and unique user id on success.
     """
     # A one-shot client that owns (and on close fully tears down) its session.
-    client = RohlikAPI(data[CONF_EMAIL], data[CONF_PASSWORD])
+    client = RohlikAPI(
+        data[CONF_EMAIL],
+        data[CONF_PASSWORD],
+        base_url=get_site(data.get(CONF_SITE)).base_url,
+    )
     try:
         reply = await client.login()
         user = reply["data"]["user"]
@@ -39,6 +44,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     finally:
         await client.close()
 
+
+SITE_SELECTOR = SelectSelector(
+    SelectSelectorConfig(
+        options=list(SITES),
+        mode=SelectSelectorMode.DROPDOWN,
+        translation_key=CONF_SITE,
+    )
+)
 
 ANALYTICS_SCHEMA = vol.Schema({
     vol.Optional(CONF_ANALYTICS, default=DEFAULT_ANALYTICS): SelectSelector(
@@ -96,6 +109,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
+                vol.Required(CONF_SITE, default=DEFAULT_SITE): SITE_SELECTOR,
                 vol.Required(CONF_EMAIL): str,
                 vol.Required(CONF_PASSWORD): str,
             }),
@@ -137,7 +151,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             data = {
-                CONF_EMAIL: reauth_entry.data[CONF_EMAIL],
+                **reauth_entry.data,
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
             }
             try:
@@ -159,6 +173,49 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
             errors=errors,
             description_placeholders={"email": reauth_entry.data[CONF_EMAIL]},
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Move an existing entry to another shop (e.g. Knuspr.de).
+
+        Entries created before site selection existed all point at Rohlík.cz;
+        this lets them switch without being removed and re-added.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            data = {
+                **entry.data,
+                CONF_SITE: user_input[CONF_SITE],
+                CONF_PASSWORD: user_input[CONF_PASSWORD],
+            }
+            try:
+                info = await validate_input(self.hass, data)
+            except InvalidCredentialsError:
+                errors["base"] = "invalid_auth"
+            except RohlikAPIError:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unknown exception")
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(info["user_id"])
+                self._abort_if_unique_id_mismatch(reason="wrong_account")
+                return self.async_update_reload_and_abort(entry, data=data)
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_SITE, default=entry.data.get(CONF_SITE, DEFAULT_SITE)
+                ): SITE_SELECTOR,
+                vol.Required(CONF_PASSWORD): str,
+            }),
+            errors=errors,
+            description_placeholders={"email": entry.data[CONF_EMAIL]},
         )
 
     @staticmethod

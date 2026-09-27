@@ -4,11 +4,43 @@ Defining constants for the project.
 from __future__ import annotations
 
 from aiohttp import ClientTimeout
+from dataclasses import dataclass
 from typing import Final
 
 
 HTTP_TIMEOUT: Final = ClientTimeout(total=10)
 DOMAIN = "rohlikcz"
+
+""" Sites """
+
+
+@dataclass(frozen=True)
+class Site:
+    """A Rohlík Group shop. All of them run the same backend API."""
+
+    base_url: str
+    name: str
+    currency: str
+    timezone: str
+
+
+CONF_SITE = "site"
+DEFAULT_SITE = "cz"
+SITES: Final[dict[str, Site]] = {
+    "cz": Site("https://www.rohlik.cz", "Rohlík.cz", "CZK", "Europe/Prague"),
+    "de": Site("https://www.knuspr.de", "Knuspr.de", "EUR", "Europe/Berlin"),
+    "at": Site("https://www.gurkerl.at", "Gurkerl.at", "EUR", "Europe/Vienna"),
+    "hu": Site("https://www.kifli.hu", "Kifli.hu", "HUF", "Europe/Budapest"),
+    "ro": Site("https://www.sezamo.ro", "Sezamo.ro", "RON", "Europe/Bucharest"),
+}
+
+
+def get_site(key: str | None) -> Site:
+    """Return the site for a config entry's site key.
+
+    Entries created before site selection existed have no key and are Rohlík.cz.
+    """
+    return SITES.get(key or DEFAULT_SITE, SITES[DEFAULT_SITE])
 
 """Icons"""
 ICON_PARENTCLUB = "mdi:human-male-female-child"

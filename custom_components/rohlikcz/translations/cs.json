@@ -2,15 +2,17 @@
   "config": {
     "step": {
       "user": {
-        "title": "Účet Rohlik.cz",
-        "description": "Zadejte své přihlašovací údaje do Rohlik.cz.",
+        "title": "Účet Rohlík",
+        "description": "Vyberte obchod a zadejte do něj své přihlašovací údaje.",
         "data": {
+          "site": "Obchod",
           "email": "E-mail",
           "password": "Heslo"
         },
         "data_description": {
-          "email": "Váš e-mail pro přihlášení do Rohlik.cz",
-          "password": "Vaše heslo pro přihlášení do Rohlik.cz"
+          "site": "Obchod skupiny Rohlík, u kterého máte účet.",
+          "email": "Váš e-mail pro přihlášení do obchodu",
+          "password": "Vaše heslo pro přihlášení do obchodu"
         }
       },
       "analytics": {
@@ -27,22 +29,31 @@
         }
       },
       "reauth_confirm": {
-        "title": "Opětovné přihlášení Rohlik.cz",
+        "title": "Opětovné přihlášení k účtu Rohlík",
         "description": "Uložené přihlašovací údaje pro {email} již nejsou platné. Zadejte znovu heslo.",
         "data": {
+          "password": "Heslo"
+        }
+      },
+      "reconfigure": {
+        "title": "Změna obchodu",
+        "description": "Vyberte obchod, u kterého je účet {email}, a zadejte jeho heslo.",
+        "data": {
+          "site": "Obchod",
           "password": "Heslo"
         }
       }
     },
     "error": {
-      "cannot_connect": "Připojení k Rohlik.cz selhalo",
+      "cannot_connect": "Připojení k obchodu selhalo",
       "invalid_auth": "Neplatné přihlašovací údaje",
       "unknown": "Neočekávaná chyba"
     },
     "abort": {
       "already_configured": "Účet je již nakonfigurován",
       "reauth_successful": "Opětovné přihlášení proběhlo úspěšně",
-      "wrong_account": "Přihlašovací údaje patří jinému účtu Rohlik"
+      "wrong_account": "Přihlašovací údaje patří jinému účtu Rohlik",
+      "reconfigure_successful": "Účet byl přesunut do vybraného obchodu"
     }
   },
   "options": {
@@ -63,6 +74,15 @@
     }
   },
   "selector": {
+    "site": {
+      "options": {
+        "cz": "Rohlík.cz (Česko)",
+        "de": "Knuspr.de (Německo)",
+        "at": "Gurkerl.at (Rakousko)",
+        "hu": "Kifli.hu (Maďarsko)",
+        "ro": "Sezamo.ro (Rumunsko)"
+      }
+    },
     "analytics": {
       "options": {
         "categories_l0": "Nejvyšší kategorie (např. Nápoje, Drogerie, Ovoce a zelenina)",
@@ -138,8 +158,7 @@
         "name": "Expresní doručení zdarma"
       },
       "credit_amount": {
-        "name": "Zůstatek kreditu",
-        "unit_of_measurement": "Kč"
+        "name": "Zůstatek kreditu"
       },
       "bags_amount": {
         "name": "Počet tašek",
@@ -149,8 +168,7 @@
         "name": "Zbývající dny Xtra"
       },
       "cart_price": {
-        "name": "Cena košíku",
-        "unit_of_measurement": "Kč"
+        "name": "Cena košíku"
       },
       "updated": {
         "name": "Aktualizováno"
@@ -180,16 +198,13 @@
         "name": "Čas doručení"
       },
       "monthly_spent": {
-        "name": "Měsíční útrata",
-        "unit_of_measurement": "Kč"
+        "name": "Měsíční útrata"
       },
       "yearly_spent": {
-        "name": "Roční útrata",
-        "unit_of_measurement": "Kč"
+        "name": "Roční útrata"
       },
       "alltime_spent": {
-        "name": "Celková útrata",
-        "unit_of_measurement": "Kč"
+        "name": "Celková útrata"
       },
       "categories_l0_this_year": {
         "name": "Hlavní kategorie tento rok"

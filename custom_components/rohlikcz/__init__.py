@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     DOMAIN, CONF_ANALYTICS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
-    SERVICE_ADD_TO_CART,
+    SERVICE_ADD_TO_CART, CONF_SITE, DEFAULT_SITE,
 )
 from .hub import RohlikAccount
 from .services import register_services
@@ -50,6 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bo
         top_n=top_n,
         hide_discontinued=hide_discontinued,
         entry=entry,
+        site=entry.data.get(CONF_SITE, DEFAULT_SITE),
     )
 
     # Performs the first refresh; raises ConfigEntryNotReady on connection

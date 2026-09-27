@@ -16,7 +16,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from rohlik_api import APIRequestFailedError, InvalidCredentialsError
 
-from custom_components.rohlikcz.const import CONF_ANALYTICS, DOMAIN
+from custom_components.rohlikcz.const import CONF_ANALYTICS, CONF_SITE, DOMAIN
 from custom_components.rohlikcz.hub import OrderStore, RohlikAccount
 
 from fixtures_data import sample_api_data
@@ -65,6 +65,61 @@ async def test_setup_creates_entities_and_unloads(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_setup_uses_entry_site(hass: HomeAssistant) -> None:
+    """A non-Czech entry talks to its own shop and reports its currency."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="123456",
+        data={**ENTRY_DATA, CONF_SITE: "de"},
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=sample_api_data()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    account = entry.runtime_data
+    assert account._client.base_url == "https://www.knuspr.de"
+    assert account.timezone == ZoneInfo("Europe/Berlin")
+    assert account.device_info["manufacturer"] == "Knuspr.de"
+
+    ent_reg = er.async_get(hass)
+    for key in ("cart_price", "credit_amount", "monthly_spent"):
+        entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, f"123456_{key}")
+        assert hass.states.get(entity_id).attributes["unit_of_measurement"] == "EUR"
+
+
+async def test_setup_without_site_is_rohlik_cz(hass: HomeAssistant) -> None:
+    """Entries from before site selection keep using Rohlík.cz and CZK."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=sample_api_data()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.runtime_data._client.base_url == "https://www.rohlik.cz"
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_cart_price")
+    assert hass.states.get(entity_id).attributes["unit_of_measurement"] == "CZK"
+
+
+async def test_czech_language_keeps_kc_unit(hass: HomeAssistant) -> None:
+    """Czech installs keep the "Kč" unit their statistics were recorded in."""
+    hass.config.language = "cs"
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with _patch_get_data(return_value=sample_api_data()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, "123456_monthly_spent")
+    assert hass.states.get(entity_id).attributes["unit_of_measurement"] == "Kč"
 
 
 async def test_unload_leaves_ha_session_to_home_assistant(

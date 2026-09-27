@@ -63,7 +63,7 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
         items = []
         for product in cart.products:
             # Format the summary to include relevant information
-            summary = f"{product.name} ({product.quantity}) - {product.price} Kč"
+            summary = f"{product.name} ({product.quantity}) - {product.price} {self._rohlik_hub.currency}"
 
             # Use cart_item_id as the unique identifier for cart items
             items.append(

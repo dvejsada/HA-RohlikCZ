@@ -127,7 +127,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                 if order.get("items_count") is not None:
                     description_parts.append(f"Items: {order['items_count']}")
                 if order.get("price") is not None:
-                    description_parts.append(f"Price: {order['price']} CZK")
+                    description_parts.append(f"Price: {order['price']} {self._rohlik_account.currency}")
                 description = "\n".join(description_parts) if description_parts else None
 
                 event = CalendarEvent(
@@ -196,7 +196,7 @@ class RohlikDeliveryCalendar(BaseEntity, CalendarEntity, RestoreEntity):
                             description_parts.append(f"Items: {order['itemsCount']}")
                         price_amount = order.get("priceComposition", {}).get("total", {}).get("amount")
                         if price_amount is not None:
-                            description_parts.append(f"Price: {price_amount} CZK")
+                            description_parts.append(f"Price: {price_amount} {self._rohlik_account.currency}")
                         description = "\n".join(description_parts) if description_parts else None
 
                         event = CalendarEvent(

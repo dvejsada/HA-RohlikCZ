@@ -2,15 +2,17 @@
   "config": {
     "step": {
       "user": {
-        "title": "Rohlik.cz Account",
-        "description": "Enter your Rohlik.cz login credentials.",
+        "title": "Rohlík account",
+        "description": "Choose your shop and enter its login credentials.",
         "data": {
+          "site": "Shop",
           "email": "Email",
           "password": "Password"
         },
         "data_description": {
-          "email": "Your Rohlik.cz account email",
-          "password": "Your Rohlik.cz account password"
+          "site": "The Rohlík Group shop your account is with.",
+          "email": "Your shop account email",
+          "password": "Your shop account password"
         }
       },
       "analytics": {
@@ -27,22 +29,31 @@
         }
       },
       "reauth_confirm": {
-        "title": "Re-authenticate Rohlik.cz",
+        "title": "Re-authenticate Rohlík account",
         "description": "The stored credentials for {email} are no longer valid. Enter the password again.",
         "data": {
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Change shop",
+        "description": "Choose the shop that the account {email} is with, and enter its password.",
+        "data": {
+          "site": "Shop",
           "password": "Password"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Rohlik.cz",
+      "cannot_connect": "Failed to connect to the shop",
       "invalid_auth": "Invalid email or password",
       "unknown": "Unexpected error"
     },
     "abort": {
       "already_configured": "Account is already configured",
       "reauth_successful": "Re-authentication was successful",
-      "wrong_account": "The credentials are for a different Rohlik account"
+      "wrong_account": "The credentials are for a different Rohlik account",
+      "reconfigure_successful": "The account was moved to the selected shop"
     }
   },
   "options": {
@@ -63,6 +74,15 @@
     }
   },
   "selector": {
+    "site": {
+      "options": {
+        "cz": "Rohlík.cz (Czechia)",
+        "de": "Knuspr.de (Germany)",
+        "at": "Gurkerl.at (Austria)",
+        "hu": "Kifli.hu (Hungary)",
+        "ro": "Sezamo.ro (Romania)"
+      }
+    },
     "analytics": {
       "options": {
         "categories_l0": "Top-level categories (e.g. Drinks, Drugstore, Fruit & Vegetables)",
@@ -138,8 +158,7 @@
         "name": "Free Express Deliveries"
       },
       "credit_amount": {
-        "name": "Credit Balance",
-        "unit_of_measurement": "CZK"
+        "name": "Credit Balance"
       },
       "bags_amount": {
         "name": "Bags Amount",
@@ -149,8 +168,7 @@
         "name": "Xtra Days Remaining"
       },
       "cart_price": {
-        "name": "Cart Total",
-        "unit_of_measurement": "CZK"
+        "name": "Cart Total"
       },
       "updated": {
         "name": "Last Updated"
@@ -180,16 +198,13 @@
         "name": "Delivery Time"
       },
       "monthly_spent": {
-        "name": "Spent This Month",
-        "unit_of_measurement": "CZK"
+        "name": "Spent This Month"
       },
       "yearly_spent": {
-        "name": "Spent This Year",
-        "unit_of_measurement": "CZK"
+        "name": "Spent This Year"
       },
       "alltime_spent": {
-        "name": "Spent All Time",
-        "unit_of_measurement": "CZK"
+        "name": "Spent All Time"
       },
       "categories_l0_this_year": {
         "name": "Top Categories This Year"
