@@ -7,7 +7,7 @@
 Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home Assistant! Track deliveries, monitor your cart, automate shopping, and never miss a delivery window — all from your smart home dashboard.
 
 > **What is Rohlík.cz?**  
-> Rohlík.cz is one of the most popular online grocery and food-delivery services in the Czech Republic (also operating as Knuspr in Germany and Austria, and Kifli.hu in Hungary). They deliver fresh groceries, household goods and more — often within hours.
+> Rohlík.cz is one of the most popular online grocery and food-delivery services in the Czech Republic (also operating as Knuspr.de in Germany, Gurkerl.at in Austria, Kifli.hu in Hungary and Sezamo.ro in Romania — all supported by this integration). They deliver fresh groceries, household goods and more — often within hours.
 
 > [!WARNING]
 > This integration uses a reverse-engineered API from the Rohlík.cz website. It is **not** officially supported by Rohlík.cz. Use it at your own risk.
@@ -62,13 +62,22 @@ HACS hides pre-releases by default, so the 1.0.0 beta will not show up until you
 1. Go to **Settings → Devices & Services** in your Home Assistant UI.
 2. Click **Add Integration** (the `+` button in the bottom right).
 3. Search for **Rohlik.cz** and select it.
-4. Enter your Rohlík.cz credentials:
-   - **Email** — your Rohlík.cz account email
-   - **Password** — your Rohlík.cz account password
+4. Pick your **Shop** and enter its credentials:
+   - **Shop** — Rohlík.cz, Knuspr.de, Gurkerl.at, Kifli.hu or Sezamo.ro
+   - **Email** — your account email
+   - **Password** — your account password
 5. Click **Submit** — entities will be set up automatically.
 
+Amounts (credit, cart total, spending) are reported in the shop's currency (CZK, EUR, HUF or RON).
+
 > [!NOTE]
-> If your password later changes or stops working, Home Assistant prompts you to re-enter it (**re-authentication**) instead of the integration silently failing. Each Rohlík.cz account can only be added once.
+> If your password later changes or stops working, Home Assistant prompts you to re-enter it (**re-authentication**) instead of the integration silently failing. Each account can only be added once.
+
+> [!TIP]
+> Entries created before shop selection existed point at Rohlík.cz. To move one to another shop (e.g. Knuspr.de), open the integration entry's **⋮ menu → Reconfigure** and pick the shop — no need to remove and re-add it.
+
+> [!NOTE]
+> The **Delivery Time** sensor reads the courier's arrival time from the shop's delivery announcement. Announcements that give a clock time work in every shop; "in N minutes" countdowns are currently only understood in Czech.
 
 ### Optional: Spending Analytics
 
@@ -105,7 +114,7 @@ Enabling analytics triggers a one-time download of your full order history (this
 | **Phone** | Your registered phone number |
 | **Remaining Orders Without Limit** | Premium orders with no minimum price limit remaining |
 | **Remaining Free Express Deliveries** | Free express deliveries still available |
-| **Credit Balance** | Your current account credit (CZK) |
+| **Credit Balance** | Your current account credit (in the shop's currency) |
 | **Reusable Bags** | Number of reusable bags on your account |
 | **Premium Days Remaining** | Days left in your premium subscription *(premium users only)* |
 | **Cart Total** | Current total value of your shopping cart |
@@ -116,7 +125,7 @@ Enabling analytics triggers a one-time download of your full order history (this
 | **Delivery Slot Start** | Start of the delivery window for your next order |
 | **Delivery Slot End** | End of the delivery window for your next order |
 | **Delivery Time** | Predicted exact delivery time for your next order |
-| **Monthly Spent** | Total amount spent on Rohlík.cz this month |
+| **Monthly Spent** | Total amount spent this month |
 | **Yearly Spent** | Total amount spent this year *(requires Spending Analytics)* |
 | **All Time Spent** | Total spent across all tracked orders *(requires Spending Analytics)*; the `by_year` attribute breaks the total down per year (`total` and `order_count` per year) |
 

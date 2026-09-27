@@ -79,7 +79,9 @@ def _resolve_clock_time(
     return delivery_dt
 
 
-def extract_delivery_datetime(text: str, received_at: datetime | None = None) -> datetime | None:
+def extract_delivery_datetime(
+    text: str, received_at: datetime | None = None, tz: ZoneInfo | None = None
+) -> datetime | None:
     """
     Extract delivery time information from various formatted strings and return a datetime object.
 
@@ -95,6 +97,8 @@ def extract_delivery_datetime(text: str, received_at: datetime | None = None) ->
             minutes") messages are counted from it, but never resolve to a time
             already past (an overdue courier is due now), and clock times are
             placed on its day. Defaults to the current time.
+        tz: The shop's local timezone, which clock times in the text are in.
+            Defaults to Europe/Prague (Rohlík.cz).
 
     Returns:
         A timezone-aware datetime object representing the delivery time, or None if no valid time found
@@ -110,9 +114,9 @@ def extract_delivery_datetime(text: str, received_at: datetime | None = None) ->
     # Get plain text without HTML tags or entities (&nbsp;) for pattern detection
     plain_text: str = html.unescape(re.sub(r'<[^>]+>', '', clean_text))
 
-    prague_tz = ZoneInfo('Europe/Prague')
-    now = datetime.now(tz=prague_tz)
-    received_at = received_at.astimezone(prague_tz) if received_at is not None else now
+    local_tz = tz or ZoneInfo('Europe/Prague')
+    now = datetime.now(tz=local_tz)
+    received_at = received_at.astimezone(local_tz) if received_at is not None else now
 
     # Type 1: Date and time
     date_matches = _HIGHLIGHTED_DATE_PATTERN.findall(clean_text)
@@ -122,7 +126,7 @@ def extract_delivery_datetime(text: str, received_at: datetime | None = None) ->
         try:
             day, month = map(int, date_matches[0].replace('.', ' ').split())  # e.g. "26.4."
             hour, minute = map(int, time_matches[0].split(':'))  # e.g. "08:00"
-            delivery_dt = datetime(received_at.year, month, day, hour, minute, tzinfo=prague_tz)
+            delivery_dt = datetime(received_at.year, month, day, hour, minute, tzinfo=local_tz)
             if delivery_dt < received_at - timedelta(days=180):
                 # Announced in December for early January.
                 delivery_dt = delivery_dt.replace(year=received_at.year + 1)

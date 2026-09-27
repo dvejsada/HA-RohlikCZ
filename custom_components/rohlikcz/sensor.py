@@ -7,7 +7,6 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, Literal
-from zoneinfo import ZoneInfo
 from dataclasses import dataclass
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
@@ -110,6 +109,7 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
             delivery_time = extract_delivery_datetime(
                 delivery_info[0].get("content", ""),
                 self._rohlik_account.announcement_received_at(delivery_info[0]),
+                tz=self._rohlik_account.timezone,
             )
 
             if delivery_info[0].get("additionalContent", None):
@@ -300,6 +300,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                 delivery_time = extract_delivery_datetime(
                     announcement.get("content", ""),
                     self._rohlik_account.announcement_received_at(announcement),
+                    tz=self._rohlik_account.timezone,
                 )
                 if delivery_time is not None:
                     self._last_value = delivery_time
@@ -528,23 +529,37 @@ class PhoneSensor(BaseEntity, SensorEntity):
         return ICON_PHONE
 
 
-class CreditAmount(BaseEntity, SensorEntity):
+class MoneySensor(BaseEntity, SensorEntity):
+    """Sensor whose value is an amount in the account's currency."""
+
+    def __init__(self, rohlik_account: RohlikAccount) -> None:
+        super().__init__(rohlik_account)
+        currency = rohlik_account.currency
+        # The unit used to come from the translations, so Czech-language
+        # installs showed "Kč". Keep it, or their long-term statistics would
+        # report a unit change.
+        if currency == "CZK" and rohlik_account.hass.config.language == "cs":
+            currency = "Kč"
+        self._attr_native_unit_of_measurement = currency
+
+
+class CreditAmount(MoneySensor):
     """Sensor for credit amount."""
 
     _attr_translation_key = "credit_amount"
     _attr_should_poll = False
 
     @property
-    def native_value(self) -> float | str:
+    def native_value(self) -> float | None:
         """Returns amount of credit as state."""
-        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('credits', "N/A")
+        return self._rohlik_account.data.get('login', {}).get('data', {}).get('user', {}).get('credits')
 
     @property
     def icon(self) -> str:
         return ICON_CREDIT
 
 
-class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
+class MonthlySpent(MoneySensor, RestoreEntity):
     """Sensor for amount spent in current month with HA-side accumulation.
 
     Only tracks orders that are delivered and closed (have final price).
@@ -560,7 +575,7 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
         super().__init__(rohlik_account)
         self._monthly_total: float = 0.0
         self._processed_orders: set[str] = set()  # Store order IDs
-        self._current_month: str = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m")
+        self._current_month: str = datetime.now(self._rohlik_account.timezone).strftime("%Y-%m")
         self._last_reset: datetime | None = None
 
     def _is_order_final(self, order: dict) -> bool:
@@ -599,7 +614,7 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
         if (last_state := await self.async_get_last_state()) is not None:
             self._monthly_total = last_state.attributes.get("monthly_total", 0.0)
             self._processed_orders = set(last_state.attributes.get("processed_orders", []))
-            self._current_month = last_state.attributes.get("current_month", datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m"))
+            self._current_month = last_state.attributes.get("current_month", datetime.now(self._rohlik_account.timezone).strftime("%Y-%m"))
             if last_reset_str := last_state.attributes.get("last_reset"):
                 self._last_reset = datetime.fromisoformat(last_reset_str)
 
@@ -609,13 +624,13 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
 
     def _check_and_reset_month(self) -> None:
         """Reset total if month changed."""
-        current_month = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m")
+        current_month = datetime.now(self._rohlik_account.timezone).strftime("%Y-%m")
         if current_month != self._current_month:
             _LOGGER.info(f"Month changed from {self._current_month} to {current_month}, resetting monthly total")
             self._monthly_total = 0.0
             self._processed_orders = set()
             self._current_month = current_month
-            self._last_reset = datetime.now(ZoneInfo("Europe/Prague"))
+            self._last_reset = datetime.now(self._rohlik_account.timezone)
 
     def _process_new_orders(self) -> None:
         """Process new orders and add to total.
@@ -627,7 +642,7 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
         if not orders:
             return
 
-        current_month_pattern = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m-")
+        current_month_pattern = datetime.now(self._rohlik_account.timezone).strftime("%Y-%m-")
         new_orders_count = 0
 
         for order in orders:
@@ -663,14 +678,14 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
                 self._processed_orders.add(order_key)
                 new_orders_count += 1
 
-                _LOGGER.debug(f"Added order {order_id} with amount {amount} CZK. New total: {self._monthly_total} CZK")
+                _LOGGER.debug(f"Added order {order_id} with amount {amount}. New total: {self._monthly_total}")
 
             except (KeyError, ValueError, TypeError) as e:
                 _LOGGER.warning(f"Skipping order due to error: {e}, order ID: {order.get('id')}")
                 continue
 
         if new_orders_count > 0:
-            _LOGGER.info(f"Processed {new_orders_count} new order(s). Monthly total: {self._monthly_total} CZK")
+            _LOGGER.info(f"Processed {new_orders_count} new order(s). Monthly total: {self._monthly_total}")
 
     @property
     def native_value(self) -> float | None:
@@ -701,7 +716,7 @@ class MonthlySpent(BaseEntity, SensorEntity, RestoreEntity):
         return ICON_MONTHLY_SPENT
 
 
-class YearlySpent(BaseEntity, SensorEntity):
+class YearlySpent(MoneySensor):
     """Sensor for amount spent in current year from persistent order store."""
 
     _attr_translation_key = "yearly_spent"
@@ -714,7 +729,7 @@ class YearlySpent(BaseEntity, SensorEntity):
         store = self._rohlik_account.order_store
         if not store:
             return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        year = datetime.now(self._rohlik_account.timezone).strftime("%Y")
         return store.yearly_total(year)
 
     @property
@@ -722,7 +737,7 @@ class YearlySpent(BaseEntity, SensorEntity):
         store = self._rohlik_account.order_store
         if not store:
             return None
-        year = datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+        year = datetime.now(self._rohlik_account.timezone).strftime("%Y")
         count = store.yearly_count(year)
         total = store.yearly_total(year)
         return {
@@ -736,7 +751,7 @@ class YearlySpent(BaseEntity, SensorEntity):
         return ICON_YEARLY_SPENT
 
 
-class AllTimeSpent(BaseEntity, SensorEntity):
+class AllTimeSpent(MoneySensor):
     """Sensor for total amount spent across all tracked orders."""
 
     _attr_translation_key = "alltime_spent"
@@ -820,9 +835,8 @@ class SpendingBreakdownSensor(BaseEntity, SensorEntity):
         self.entity_description = description
         super().__init__(rohlik_account)
 
-    @staticmethod
-    def _year() -> str:
-        return datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y")
+    def _year(self) -> str:
+        return datetime.now(self._rohlik_account.timezone).strftime("%Y")
 
     def _entries(self, store: OrderStore, year: str) -> list:
         d = self.entity_description
@@ -939,7 +953,7 @@ class BagsAmountSensor(BaseEntity, SensorEntity):
         extra_attr: dict = {"Max Bags": bags_data.get('max', 0)}
         if bags_data.get('deposit', None):
             extra_attr["Deposit Amount"] = bags_data.get('deposit').get('amount', 0)
-            extra_attr["Deposit Currency"] = bags_data.get('deposit').get('currency', 'CZK')
+            extra_attr["Deposit Currency"] = bags_data.get('deposit').get('currency', self._rohlik_account.currency)
         return extra_attr
 
     @property
@@ -976,7 +990,7 @@ class PremiumDaysRemainingSensor(BaseEntity, SensorEntity):
         return ICON_PREMIUM_DAYS
 
 
-class CartPriceSensor(BaseEntity, SensorEntity):
+class CartPriceSensor(MoneySensor):
     """Sensor for total cart price."""
 
     _attr_translation_key = "cart_price"
