@@ -1,0 +1,61 @@
+name: Release
+
+# Builds rohlikcz.zip (the file HACS downloads, see hacs.json) and attaches it
+# to the GitHub release. Runs when a release is published; it can also be run
+# by hand for an existing tag, for example to rebuild a missing ZIP.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach the ZIP to (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release-zip:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check manifest version matches tag
+        run: |
+          manifest_version=$(jq -r .version custom_components/rohlikcz/manifest.json)
+          if [ "${TAG#v}" != "$manifest_version" ]; then
+            echo "::error::Tag $TAG does not match manifest version $manifest_version"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+
+      - name: Run tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
+          python -m pytest tests/ -q
+
+      - name: Build ZIP
+        # HACS extracts the ZIP straight into custom_components/rohlikcz, so the
+        # integration's files must sit at the root of the archive.
+        working-directory: custom_components/rohlikcz
+        run: |
+          find . -name __pycache__ -type d -prune -exec rm -rf {} +
+          zip -r "$GITHUB_WORKSPACE/rohlikcz.zip" .
+          unzip -l "$GITHUB_WORKSPACE/rohlikcz.zip"
+
+      - name: Attach ZIP to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" rohlikcz.zip --clobber --repo "$GITHUB_REPOSITORY"
