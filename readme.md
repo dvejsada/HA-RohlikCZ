@@ -12,9 +12,6 @@ Bring your **[Rohlík.cz](https://www.rohlik.cz)** grocery deliveries into Home 
 > [!WARNING]
 > This integration uses a reverse-engineered API from the Rohlík.cz website. It is **not** officially supported by Rohlík.cz. Use it at your own risk.
 
-> [!NOTE]
-> The current release is **1.0.0-beta4**, a pre-release of the upcoming 1.0.0. It is feature-complete but still being tested — see [Installing the beta](#installing-the-beta) below, and please [report anything you run into](https://github.com/dvejsada/HA-RohlikCZ/issues).
-
 ---
 
 ## ✨ What Can You Do With This Integration?
@@ -39,20 +36,14 @@ Install in one click via the Home Assistant Community Store:
 
 > Don't have HACS yet? [Get it here](https://hacs.xyz/).
 
-#### Installing the beta
+#### Trying pre-releases
 
-HACS hides pre-releases by default, so the 1.0.0 beta will not show up until you ask for it:
-
-1. Open **Rohlík.cz** in HACS.
-2. Click **⋮ → Redownload**.
-3. Enable **Show beta versions**.
-4. Pick `v1.0.0-beta4` and download it.
-5. Restart Home Assistant.
+New versions are sometimes published as pre-releases (betas) first. HACS hides them by default; to try one, open **Rohlík.cz** in HACS, click **⋮ → Redownload**, enable **Show beta versions** and pick the version. Please [report anything you run into](https://github.com/dvejsada/HA-RohlikCZ/issues).
 
 ### Option 2 — Manual Installation
 
-1. Download the `rohlikcz` folder from the [latest release](https://github.com/dvejsada/HA-RohlikCZ/releases) — for the beta, pick the newest release marked **Pre-release**.
-2. Copy the `rohlikcz` folder into your Home Assistant `config/custom_components/` directory.
+1. Download `rohlikcz.zip` from the [latest release](https://github.com/dvejsada/HA-RohlikCZ/releases/latest).
+2. Extract it into a new `config/custom_components/rohlikcz/` directory in your Home Assistant configuration.
 3. Restart Home Assistant.
 
 ---
