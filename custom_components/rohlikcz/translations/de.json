@@ -97,68 +97,155 @@
     "binary_sensor": {
       "is_express_available": {
         "name": "Expresslieferung verfügbar",
-        "state": {"on": "Ja", "off": "Nein"}
+        "state": {
+          "on": "Ja",
+          "off": "Nein"
+        }
       },
       "is_reusable": {
         "name": "Mehrwegtaschen",
-        "state": {"on": "Ja", "off": "Nein"}
+        "state": {
+          "on": "Ja",
+          "off": "Nein"
+        }
       },
       "is_parent": {
         "name": "Elternclub",
-        "state": {"on": "Ja", "off": "Nein"}
+        "state": {
+          "on": "Ja",
+          "off": "Nein"
+        }
       },
       "is_premium": {
         "name": "Xtra-Mitgliedschaft",
-        "state": {"on": "Ja", "off": "Nein"}
+        "state": {
+          "on": "Ja",
+          "off": "Nein"
+        }
       },
       "is_ordered": {
         "name": "Nächste Bestellung aufgegeben",
-        "state": {"on": "Ja", "off": "Nein"}
+        "state": {
+          "on": "Ja",
+          "off": "Nein"
+        }
       },
       "is_reserved": {
         "name": "Lieferzeitfenster reserviert",
-        "state": {"on": "Ja", "off": "Nein"}
+        "state": {
+          "on": "Ja",
+          "off": "Nein"
+        }
       }
     },
     "sensor": {
-      "first_delivery": {"name": "Nächste Lieferung"},
-      "account_id": {"name": "Konto-ID"},
-      "email": {"name": "E-Mail"},
-      "phone": {"name": "Telefon"},
-      "no_limit": {"name": "Bestellungen ohne Mindestbestellwert"},
-      "free_express": {"name": "Kostenlose Expresslieferungen"},
-      "credit_amount": {"name": "Guthaben"},
-      "bags_amount": {"name": "Anzahl der Taschen", "unit_of_measurement": "Stk."},
-      "premium_days": {"name": "Verbleibende Xtra-Tage"},
-      "cart_price": {"name": "Warenkorbwert"},
-      "updated": {"name": "Zuletzt aktualisiert"},
-      "last_order": {"name": "Letzte Bestellung"},
-      "next_order_since": {"name": "Beginn des Lieferzeitfensters"},
-      "next_order_till": {"name": "Ende des Lieferzeitfensters"},
-      "express_slot": {"name": "Express-Lieferzeitfenster"},
-      "standard_slot": {"name": "Standard-Lieferzeitfenster"},
-      "eco_slot": {"name": "Eco-Lieferzeitfenster"},
-      "delivery_info": {"name": "Lieferinformationen"},
-      "delivery_time": {"name": "Lieferzeit"},
-      "monthly_spent": {"name": "Ausgaben diesen Monat"},
-      "yearly_spent": {"name": "Ausgaben dieses Jahr"},
-      "alltime_spent": {"name": "Ausgaben insgesamt"},
-      "categories_l0_this_year": {"name": "Top-Kategorien dieses Jahr"},
-      "categories_l0_all_time": {"name": "Top-Kategorien insgesamt"},
-      "categories_this_year": {"name": "Kategorien dieses Jahr"},
-      "categories_all_time": {"name": "Kategorien insgesamt"},
-      "categories_l2_this_year": {"name": "Detaillierte Kategorien dieses Jahr"},
-      "categories_l2_all_time": {"name": "Detaillierte Kategorien insgesamt"},
-      "categories_l3_this_year": {"name": "Spezifische Kategorien dieses Jahr"},
-      "categories_l3_all_time": {"name": "Spezifische Kategorien insgesamt"},
-      "items_this_year": {"name": "Artikel dieses Jahr"},
-      "items_all_time": {"name": "Artikel insgesamt"}
+      "first_delivery": {
+        "name": "Nächste Lieferung"
+      },
+      "account_id": {
+        "name": "Konto-ID"
+      },
+      "email": {
+        "name": "E-Mail"
+      },
+      "phone": {
+        "name": "Telefon"
+      },
+      "no_limit": {
+        "name": "Bestellungen ohne Mindestbestellwert"
+      },
+      "free_express": {
+        "name": "Kostenlose Expresslieferungen"
+      },
+      "credit_amount": {
+        "name": "Guthaben"
+      },
+      "bags_amount": {
+        "name": "Anzahl der Taschen",
+        "unit_of_measurement": "Stk."
+      },
+      "premium_days": {
+        "name": "Verbleibende Xtra-Tage"
+      },
+      "cart_price": {
+        "name": "Warenkorbwert"
+      },
+      "updated": {
+        "name": "Zuletzt aktualisiert"
+      },
+      "last_order": {
+        "name": "Letzte Bestellung"
+      },
+      "next_order_since": {
+        "name": "Beginn des Lieferzeitfensters"
+      },
+      "next_order_till": {
+        "name": "Ende des Lieferzeitfensters"
+      },
+      "express_slot": {
+        "name": "Express-Lieferzeitfenster"
+      },
+      "standard_slot": {
+        "name": "Standard-Lieferzeitfenster"
+      },
+      "eco_slot": {
+        "name": "Eco-Lieferzeitfenster"
+      },
+      "delivery_info": {
+        "name": "Lieferinformationen"
+      },
+      "delivery_time": {
+        "name": "Lieferzeit"
+      },
+      "monthly_spent": {
+        "name": "Ausgaben diesen Monat"
+      },
+      "yearly_spent": {
+        "name": "Ausgaben dieses Jahr"
+      },
+      "alltime_spent": {
+        "name": "Ausgaben insgesamt"
+      },
+      "categories_l0_this_year": {
+        "name": "Top-Kategorien dieses Jahr"
+      },
+      "categories_l0_all_time": {
+        "name": "Top-Kategorien insgesamt"
+      },
+      "categories_this_year": {
+        "name": "Kategorien dieses Jahr"
+      },
+      "categories_all_time": {
+        "name": "Kategorien insgesamt"
+      },
+      "categories_l2_this_year": {
+        "name": "Detaillierte Kategorien dieses Jahr"
+      },
+      "categories_l2_all_time": {
+        "name": "Detaillierte Kategorien insgesamt"
+      },
+      "categories_l3_this_year": {
+        "name": "Spezifische Kategorien dieses Jahr"
+      },
+      "categories_l3_all_time": {
+        "name": "Spezifische Kategorien insgesamt"
+      },
+      "items_this_year": {
+        "name": "Artikel dieses Jahr"
+      },
+      "items_all_time": {
+        "name": "Artikel insgesamt"
+      }
     },
     "todo": {
-      "shopping_cart": {"name": "Warenkorb"}
+      "shopping_cart": {
+        "name": "Warenkorb"
+      }
     },
     "calendar": {
-      "delivery_calendar": {"name": "Bestellkalender"}
+      "delivery_calendar": {
+        "name": "Bestellkalender"
+      }
     }
   }
 }

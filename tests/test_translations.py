@@ -21,7 +21,8 @@ class TestGermanTranslation(unittest.TestCase):
     def test_complete_string_tree(self):
         english = dict(strings(json.loads((ROOT / "en.json").read_text(encoding="utf-8"))))
         german = dict(strings(json.loads((ROOT / "de.json").read_text(encoding="utf-8"))))
-        self.assertEqual(english.keys(), german.keys())
+        self.assertEqual(set(english) - set(german), set(), "missing keys in de")
+        self.assertEqual(set(german) - set(english), set(), "extra keys in de")
         for path, value in german.items():
             with self.subTest(path=path):
                 self.assertIsInstance(value, str)
