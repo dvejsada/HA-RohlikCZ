@@ -1,0 +1,164 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rohlík-Konto",
+        "description": "Wähle deinen Shop und gib die zugehörigen Zugangsdaten ein.",
+        "data": {
+          "site": "Shop",
+          "email": "E-Mail",
+          "password": "Passwort"
+        },
+        "data_description": {
+          "site": "Der Shop der Rohlík-Gruppe, bei dem du ein Konto hast.",
+          "email": "Die E-Mail-Adresse deines Shop-Kontos",
+          "password": "Das Passwort deines Shop-Kontos"
+        }
+      },
+      "analytics": {
+        "title": "Ausgabenanalyse",
+        "description": "Wähle die Auswertungen aus, die du verfolgen möchtest. Für jede ausgewählte Ebene werden Sensoren für dieses Jahr und den gesamten Zeitraum erstellt. Wenn du eine Option auswählst, wird dein Bestellverlauf einmalig heruntergeladen (dies kann einige Minuten dauern).",
+        "data": {
+          "analytics": "Analyseebenen",
+          "top_n": "Anzahl der Top-Artikel in Sensoren",
+          "hide_discontinued": "Nicht mehr angebotene Produkte ausblenden"
+        },
+        "data_description": {
+          "top_n": "Wie viele Artikel mit den höchsten Ausgaben in den Sensorattributen angezeigt werden. Standard: 10.",
+          "hide_discontinued": "Nicht mehr angebotene Produkte aus den Top-Kategorien und Top-Artikeln ausschließen."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Rohlík-Konto erneut authentifizieren",
+        "description": "Die gespeicherten Zugangsdaten für {email} sind nicht mehr gültig. Gib das Passwort erneut ein.",
+        "data": {
+          "password": "Passwort"
+        }
+      },
+      "reconfigure": {
+        "title": "Shop wechseln",
+        "description": "Wähle den Shop aus, zu dem das Konto {email} gehört, und gib das Passwort ein.",
+        "data": {
+          "site": "Shop",
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Shop fehlgeschlagen",
+      "invalid_auth": "Ungültige E-Mail-Adresse oder ungültiges Passwort",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Das Konto ist bereits eingerichtet",
+      "reauth_successful": "Erneute Authentifizierung erfolgreich",
+      "wrong_account": "Die Zugangsdaten gehören zu einem anderen Rohlík-Konto",
+      "reconfigure_successful": "Das Konto wurde zum ausgewählten Shop verschoben"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ausgabenanalyse",
+        "description": "Wähle die Auswertungen aus, die du verfolgen möchtest. Änderungen werden nach dem Neuladen wirksam.",
+        "data": {
+          "analytics": "Analyseebenen",
+          "top_n": "Anzahl der Top-Artikel in Sensoren",
+          "hide_discontinued": "Nicht mehr angebotene Produkte ausblenden"
+        },
+        "data_description": {
+          "top_n": "Wie viele Artikel mit den höchsten Ausgaben in den Sensorattributen angezeigt werden. Standard: 10.",
+          "hide_discontinued": "Nicht mehr angebotene Produkte aus den Top-Kategorien und Top-Artikeln ausschließen."
+        }
+      }
+    }
+  },
+  "selector": {
+    "site": {
+      "options": {
+        "cz": "Rohlík.cz (Tschechien)",
+        "de": "Knuspr.de (Deutschland)",
+        "at": "Gurkerl.at (Österreich)",
+        "hu": "Kifli.hu (Ungarn)",
+        "ro": "Sezamo.ro (Rumänien)"
+      }
+    },
+    "analytics": {
+      "options": {
+        "categories_l0": "Hauptkategorien (z. B. Getränke, Drogerie, Obst und Gemüse)",
+        "categories_l1": "Unterkategorien (z. B. Heißgetränke, Reinigungsmittel, Gemüse)",
+        "categories_l2": "Detaillierte Kategorien (z. B. Kaffee, Universalreiniger, Tomaten)",
+        "categories_l3": "Spezifischste Kategorien (z. B. Kaffeebohnen, Sprühreiniger)",
+        "per_item": "Ausgaben je Artikel (z. B. Tchibo Barista, Savo Spray)"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "is_express_available": {
+        "name": "Expresslieferung verfügbar",
+        "state": {"on": "Ja", "off": "Nein"}
+      },
+      "is_reusable": {
+        "name": "Mehrwegtaschen",
+        "state": {"on": "Ja", "off": "Nein"}
+      },
+      "is_parent": {
+        "name": "Elternclub",
+        "state": {"on": "Ja", "off": "Nein"}
+      },
+      "is_premium": {
+        "name": "Xtra-Mitgliedschaft",
+        "state": {"on": "Ja", "off": "Nein"}
+      },
+      "is_ordered": {
+        "name": "Nächste Bestellung aufgegeben",
+        "state": {"on": "Ja", "off": "Nein"}
+      },
+      "is_reserved": {
+        "name": "Lieferzeitfenster reserviert",
+        "state": {"on": "Ja", "off": "Nein"}
+      }
+    },
+    "sensor": {
+      "first_delivery": {"name": "Nächste Lieferung"},
+      "account_id": {"name": "Konto-ID"},
+      "email": {"name": "E-Mail"},
+      "phone": {"name": "Telefon"},
+      "no_limit": {"name": "Bestellungen ohne Mindestbestellwert"},
+      "free_express": {"name": "Kostenlose Expresslieferungen"},
+      "credit_amount": {"name": "Guthaben"},
+      "bags_amount": {"name": "Anzahl der Taschen", "unit_of_measurement": "Stk."},
+      "premium_days": {"name": "Verbleibende Xtra-Tage"},
+      "cart_price": {"name": "Warenkorbwert"},
+      "updated": {"name": "Zuletzt aktualisiert"},
+      "last_order": {"name": "Letzte Bestellung"},
+      "next_order_since": {"name": "Beginn des Lieferzeitfensters"},
+      "next_order_till": {"name": "Ende des Lieferzeitfensters"},
+      "express_slot": {"name": "Express-Lieferzeitfenster"},
+      "standard_slot": {"name": "Standard-Lieferzeitfenster"},
+      "eco_slot": {"name": "Eco-Lieferzeitfenster"},
+      "delivery_info": {"name": "Lieferinformationen"},
+      "delivery_time": {"name": "Lieferzeit"},
+      "monthly_spent": {"name": "Ausgaben diesen Monat"},
+      "yearly_spent": {"name": "Ausgaben dieses Jahr"},
+      "alltime_spent": {"name": "Ausgaben insgesamt"},
+      "categories_l0_this_year": {"name": "Top-Kategorien dieses Jahr"},
+      "categories_l0_all_time": {"name": "Top-Kategorien insgesamt"},
+      "categories_this_year": {"name": "Kategorien dieses Jahr"},
+      "categories_all_time": {"name": "Kategorien insgesamt"},
+      "categories_l2_this_year": {"name": "Detaillierte Kategorien dieses Jahr"},
+      "categories_l2_all_time": {"name": "Detaillierte Kategorien insgesamt"},
+      "categories_l3_this_year": {"name": "Spezifische Kategorien dieses Jahr"},
+      "categories_l3_all_time": {"name": "Spezifische Kategorien insgesamt"},
+      "items_this_year": {"name": "Artikel dieses Jahr"},
+      "items_all_time": {"name": "Artikel insgesamt"}
+    },
+    "todo": {
+      "shopping_cart": {"name": "Warenkorb"}
+    },
+    "calendar": {
+      "delivery_calendar": {"name": "Bestellkalender"}
+    }
+  }
+}
