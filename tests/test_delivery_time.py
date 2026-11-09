@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rohlikcz.const import DOMAIN
+from custom_components.rohlikcz.sensor import announcement_slot
 
 from fixtures_data import sample_api_data
 
@@ -413,3 +414,47 @@ async def test_time_only_announcement_lands_on_slot_day(
     info_state = hass.states.get(info_entity_id)
     assert info_state is not None
     assert info_state.attributes["Delivery time (deprecated, use new entity)"] == expected_eta
+
+
+async def test_time_only_announcement_with_concurrent_orders(
+    hass: HomeAssistant, freezer
+) -> None:
+    """With two orders, the announcement's own order supplies the slot's day."""
+    prague = ZoneInfo("Europe/Prague")
+    freezer.move_to(datetime(2026, 10, 30, 19, 16, tzinfo=prague))
+    slot_start = datetime(2026, 11, 1, 9, 0, tzinfo=prague)
+    data = sample_api_data()
+    data["next_order"] = [
+        _order(7002, slot_start + timedelta(days=3)),
+        _order(7001, slot_start),
+    ]
+    announcement = _announcement(7001, slot_start)
+    announcement["content"] = "Váš nákup přivezeme v <span>09:15</span>."
+    data["delivery_announcements"]["data"]["announcements"] = [announcement]
+
+    _, entity_id = await _setup_delivery_time(hass, data)
+
+    assert _state_time(hass, entity_id) == datetime(2026, 11, 1, 9, 15, tzinfo=prague)
+
+
+def test_announcement_slot_matches_by_id() -> None:
+    """The slot is that of the order with the announcement's ID, wherever it is."""
+    prague = ZoneInfo("Europe/Prague")
+    first = datetime(2026, 11, 1, 9, 0, tzinfo=prague)
+    later = datetime(2026, 11, 4, 18, 0, tzinfo=prague)
+    orders = [_order(7001, first), _order(7002, later)]
+
+    assert announcement_slot({"id": 7002}, orders) == (later, later + timedelta(hours=1))
+    assert announcement_slot({"id": "7001"}, orders) == (first, first + timedelta(hours=1))
+
+
+def test_announcement_slot_without_matching_order() -> None:
+    """No order with the announcement's ID means no slot, even with one order.
+
+    Borrowing the only order's slot would move the ETA onto that order's day.
+    """
+    slot_start = datetime(2026, 11, 2, 9, 0, tzinfo=ZoneInfo("Europe/Prague"))
+
+    assert announcement_slot({"id": 7009}, [_order(7001, slot_start)]) == (None, None)
+    assert announcement_slot({"id": 7001}, None) == (None, None)
+    assert announcement_slot({"id": 7001}, [{"id": 7001}]) == (None, None)

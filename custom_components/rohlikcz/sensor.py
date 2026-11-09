@@ -28,22 +28,29 @@ _LOGGER = logging.getLogger(__name__)
 LIVE_ETA_STALE_AFTER = timedelta(hours=1)
 
 
-def announcement_slot_since(announcement: dict, upcoming_orders: list) -> datetime | None:
-    """Return the booked slot start of the order a delivery announcement is about.
+def announcement_slot(
+    announcement: dict, upcoming_orders: list | None
+) -> tuple[datetime | None, datetime | None]:
+    """Return the booked slot (since, till) of the order an announcement is about.
 
-    That is the upcoming order with the announcement's ID or, failing that, the
-    only upcoming order, the same rule by which the Delivery Time sensor trusts
-    an announcement. The parser places the announced clock time on the slot's
-    day, so a wrong order here would move the ETA to another order's day.
+    Only the upcoming order with the announcement's ID counts. The parser places
+    the announced clock time on the slot's day, so another order's slot would
+    move the ETA to that order's day. With no match it returns (None, None), and
+    the parser keeps placing the time relative to when the announcement arrived.
     """
-    orders = upcoming_orders or []
     announcement_id = str(announcement.get("id", ""))
-    order = next((o for o in orders if str(o.get("id", "")) == announcement_id), None)
-    if order is None and len(orders) == 1:
-        order = orders[0]
+    order = next(
+        (o for o in upcoming_orders or [] if str(o.get("id", "")) == announcement_id),
+        None,
+    )
     if order is None:
-        return None
-    return parse_delivery_datetime_string((order.get("deliverySlot") or {}).get("since"))
+        return None, None
+    delivery_slot = order.get("deliverySlot") or {}
+    return (
+        parse_delivery_datetime_string(delivery_slot.get("since")),
+        parse_delivery_datetime_string(delivery_slot.get("till")),
+    )
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -124,13 +131,15 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
         """ Get extra state attributes. """
         delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
         if len(delivery_info) > 0:
+            slot_since, slot_till = announcement_slot(
+                delivery_info[0], self._rohlik_account.data.get("next_order")
+            )
             delivery_time = extract_delivery_datetime(
                 delivery_info[0].get("content", ""),
                 self._rohlik_account.announcement_received_at(delivery_info[0]),
                 tz=self._rohlik_account.timezone,
-                expected=announcement_slot_since(
-                    delivery_info[0], self._rohlik_account.data.get("next_order")
-                ),
+                slot_since=slot_since,
+                slot_till=slot_till,
             )
 
             if delivery_info[0].get("additionalContent", None):
@@ -318,11 +327,15 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                 or str(announcement.get("id", "")) == str(earliest_order.get("id", ""))
             )
             if announcement_matches_soonest:
+                announced_since, announced_till = announcement_slot(
+                    announcement, upcoming_orders
+                )
                 delivery_time = extract_delivery_datetime(
                     announcement.get("content", ""),
                     self._rohlik_account.announcement_received_at(announcement),
                     tz=self._rohlik_account.timezone,
-                    expected=announcement_slot_since(announcement, upcoming_orders),
+                    slot_since=announced_since,
+                    slot_till=announced_till,
                 )
                 if delivery_time is not None:
                     self._last_value = delivery_time
