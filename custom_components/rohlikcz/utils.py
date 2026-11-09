@@ -55,8 +55,16 @@ _MINUTES_UNTIL_PATTERN = re.compile(
 )
 
 # Highlighted date ("26.4.") and clock time ("08:00"), and any clock time.
+# Rohlík usually colours the date and time it announces, but not always: some
+# announcements wrap them in a plain <span> (issue #106). A span counts only
+# when its whole content is a bare date or time, so "<span>neděle 00:50</span>"
+# (the order-edit deadline) never does. A coloured time beats a countdown; a
+# plain-span time does not, since a plain span is weaker evidence that the time
+# is the ETA ("za 5 minut (okno <span>10:00</span>–11:00)").
 _HIGHLIGHTED_DATE_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
 _HIGHLIGHTED_TIME_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
+_SPAN_DATE_PATTERN = re.compile(r'<span[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
+_SPAN_TIME_PATTERN = re.compile(r'<span[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
 _PLAIN_TIME_PATTERN = re.compile(r'\b([0-9]{1,2}:[0-9]{2})\b')
 
 # Literal backslash escapes (\u010d, \xa0, \n, ...) in a double-encoded payload.
@@ -66,6 +74,13 @@ _ESCAPE_PATTERN = re.compile(r'\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[nrt"\'\\])'
 # courier, or an announcement re-read after a restart); anything earlier is
 # tomorrow's.
 _PASSED_TIME_GRACE = timedelta(hours=1)
+
+# When placing a clock time around the booked slot, an hour early counts as
+# much as this many hours late: couriers run late far more often, and by far
+# more, than they arrive early. So a time 11 h after a 10:00 slot is that
+# evening's, not the previous evening's, while 23:50 before a 00:30 slot is
+# still the evening before.
+_EARLY_WEIGHT = 3
 
 
 def _resolve_clock_time(
@@ -79,16 +94,43 @@ def _resolve_clock_time(
     return delivery_dt
 
 
+def _place_in_slot(hour: int, minute: int, since: datetime, till: datetime) -> datetime:
+    """Place a bare HH:MM on the day that fits the booked slot best.
+
+    The slot knows the delivery day; an announced clock time refines it and is
+    never a day away from it. Candidates on the slot's day and the days either
+    side are scored by how far they fall outside the slot, with earliness
+    weighted by ``_EARLY_WEIGHT``; on a tie the slot's own day wins. Distances
+    are compared as timestamps, because subtracting two datetimes that share a
+    tzinfo ignores a DST change between them.
+    """
+    def score(candidate: datetime) -> float:
+        early = since.timestamp() - candidate.timestamp()
+        late = candidate.timestamp() - till.timestamp()
+        return max(early * _EARLY_WEIGHT, late, 0)
+
+    candidates = [
+        datetime.combine(since.date() + timedelta(days=offset), time(hour, minute), tzinfo=since.tzinfo)
+        for offset in (0, -1, 1)
+    ]
+    return min(candidates, key=score)
+
+
 def extract_delivery_datetime(
-    text: str, received_at: datetime | None = None, tz: ZoneInfo | None = None
+    text: str,
+    received_at: datetime | None = None,
+    tz: ZoneInfo | None = None,
+    slot_since: datetime | None = None,
+    slot_till: datetime | None = None,
 ) -> datetime | None:
     """
     Extract delivery time information from various formatted strings and return a datetime object.
 
-    Handles three types of delivery messages, in this order of preference:
-    1. Highlighted date and time: "delivery on 26.4. at 08:00"
-    2. Highlighted time only (HH:MM): "delivery at 17:23"
-    3. Minutes until delivery: "delivery in approximately 3 minutes"
+    Handles these types of delivery messages, in this order of preference:
+    1. A clock time in a coloured span, with a date in a span if there is one:
+       "delivery on 26.4. at 08:00", "delivery at 17:23"
+    2. Minutes until delivery: "delivery in approximately 3 minutes"
+    3. A clock time in a plain span, with a date in a span if there is one
     Any other HH:MM mentioned in the text is used as a last resort.
 
     Args:
@@ -99,6 +141,14 @@ def extract_delivery_datetime(
             placed on its day. Defaults to the current time.
         tz: The shop's local timezone, which clock times in the text are in.
             Defaults to Europe/Prague (Rohlík.cz).
+        slot_since: The start of the booked delivery slot of the order the
+            announcement is about, if known. When given, every clock time is
+            placed on the day that fits the slot (see ``_place_in_slot``) and a
+            date in the text is not used: the slot already knows the day,
+            whereas reading the day from the text or from ``received_at`` can
+            be a day off (issue #106), and dates are not written the same way
+            in every shop's language. Relative messages do not use it.
+        slot_till: The end of that slot. Defaults to ``slot_since``.
 
     Returns:
         A timezone-aware datetime object representing the delivery time, or None if no valid time found
@@ -117,46 +167,61 @@ def extract_delivery_datetime(
     local_tz = tz or ZoneInfo('Europe/Prague')
     now = datetime.now(tz=local_tz)
     received_at = received_at.astimezone(local_tz) if received_at is not None else now
+    if slot_since is not None:
+        slot_since = slot_since.astimezone(local_tz)
+        slot_till = slot_till.astimezone(local_tz) if slot_till is not None else slot_since
 
-    # Type 1: Date and time
-    date_matches = _HIGHLIGHTED_DATE_PATTERN.findall(clean_text)
-    time_matches = _HIGHLIGHTED_TIME_PATTERN.findall(clean_text)
+    date_matches = (
+        _HIGHLIGHTED_DATE_PATTERN.findall(clean_text) or _SPAN_DATE_PATTERN.findall(clean_text)
+    )
 
-    if date_matches and time_matches:
+    def resolve(clock: str, date: str | None, grace: timedelta) -> datetime | None:
+        """Turn a matched "HH:MM" (and optional "D.M.") into a datetime."""
         try:
-            day, month = map(int, date_matches[0].replace('.', ' ').split())  # e.g. "26.4."
-            hour, minute = map(int, time_matches[0].split(':'))  # e.g. "08:00"
-            delivery_dt = datetime(received_at.year, month, day, hour, minute, tzinfo=local_tz)
-            if delivery_dt < received_at - timedelta(days=180):
-                # Announced in December for early January.
-                delivery_dt = delivery_dt.replace(year=received_at.year + 1)
-            return delivery_dt
-        except (ValueError, IndexError):
-            pass
-
-    # Type 2: Highlighted time only
-    if time_matches:
-        try:
-            hour, minute = map(int, time_matches[0].split(':'))  # e.g. "17:23"
-            return _resolve_clock_time(hour, minute, received_at, _PASSED_TIME_GRACE)
+            hour, minute = map(int, clock.split(':'))  # e.g. "08:00"
+            if slot_since is not None:
+                return _place_in_slot(hour, minute, slot_since, slot_till)
+            if date is not None:
+                try:
+                    day, month = map(int, date.replace('.', ' ').split())  # e.g. "26.4."
+                    delivery_dt = datetime(received_at.year, month, day, hour, minute, tzinfo=local_tz)
+                    if delivery_dt < received_at - timedelta(days=180):
+                        # Announced in December for early January.
+                        delivery_dt = delivery_dt.replace(year=received_at.year + 1)
+                    return delivery_dt
+                except ValueError:
+                    pass
+            return _resolve_clock_time(hour, minute, received_at, grace)
         except ValueError:
-            pass
+            return None
 
-    # Type 3: Minutes until delivery, e.g. the short "Váš nákup doručíme
+    date = date_matches[0] if date_matches else None
+
+    # Type 1: Clock time in a coloured span
+    coloured_times = _HIGHLIGHTED_TIME_PATTERN.findall(clean_text)
+    if coloured_times:
+        delivery_dt = resolve(coloured_times[0], date, _PASSED_TIME_GRACE)
+        if delivery_dt is not None:
+            return delivery_dt
+
+    # Type 2: Minutes until delivery, e.g. the short "Váš nákup doručíme
     # přibližně za 2 minuty." sent during the final approach without a clock time
     minutes_match = _MINUTES_UNTIL_PATTERN.search(plain_text)
     if minutes_match:
         minutes = int(minutes_match.group(1)) if minutes_match.group(1) else 1
         return max(received_at + timedelta(minutes=minutes), now)
 
+    # Type 3: Clock time in a plain span
+    span_times = _SPAN_TIME_PATTERN.findall(clean_text)
+    if span_times:
+        delivery_dt = resolve(span_times[0], date, _PASSED_TIME_GRACE)
+        if delivery_dt is not None:
+            return delivery_dt
+
     # Last resort: any time mention in the plain text
     plain_time_matches = _PLAIN_TIME_PATTERN.findall(plain_text)
     if plain_time_matches:
-        try:
-            hour, minute = map(int, plain_time_matches[0].split(':'))
-            return _resolve_clock_time(hour, minute, received_at)
-        except ValueError:
-            pass
+        return resolve(plain_time_matches[0], None, timedelta(0))
 
     # No valid time information found
     return None
