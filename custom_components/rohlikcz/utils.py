@@ -55,8 +55,14 @@ _MINUTES_UNTIL_PATTERN = re.compile(
 )
 
 # Highlighted date ("26.4.") and clock time ("08:00"), and any clock time.
+# Rohlík usually colours the date and time it announces, but not always: some
+# announcements wrap them in a plain <span> (issue #106). A coloured span is
+# preferred; any span whose whole content is a bare date or time is the second
+# choice, so "<span>neděle 00:50</span>" (the order-edit deadline) never counts.
 _HIGHLIGHTED_DATE_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
 _HIGHLIGHTED_TIME_PATTERN = re.compile(r'<span[^>]*color:[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
+_SPAN_DATE_PATTERN = re.compile(r'<span[^>]*>([0-9]{1,2}\.[0-9]{1,2}\.)</span>')
+_SPAN_TIME_PATTERN = re.compile(r'<span[^>]*>([0-9]{1,2}:[0-9]{2})</span>')
 _PLAIN_TIME_PATTERN = re.compile(r'\b([0-9]{1,2}:[0-9]{2})\b')
 
 # Literal backslash escapes (\u010d, \xa0, \n, ...) in a double-encoded payload.
@@ -79,8 +85,28 @@ def _resolve_clock_time(
     return delivery_dt
 
 
+def _closest_clock_time(hour: int, minute: int, expected: datetime) -> datetime:
+    """Place a bare HH:MM on the day that puts it closest to the expected time.
+
+    ``expected`` is the order's booked slot, which knows the delivery day; an
+    announcement's clock time is a refinement of it, never a day away from it.
+    Distances are compared as timestamps, because subtracting two datetimes that
+    share a tzinfo ignores a DST change between them.
+    """
+    candidates = (
+        datetime.combine(
+            expected.date() + timedelta(days=offset), time(hour, minute), tzinfo=expected.tzinfo
+        )
+        for offset in (-1, 0, 1)
+    )
+    return min(candidates, key=lambda dt: abs(dt.timestamp() - expected.timestamp()))
+
+
 def extract_delivery_datetime(
-    text: str, received_at: datetime | None = None, tz: ZoneInfo | None = None
+    text: str,
+    received_at: datetime | None = None,
+    tz: ZoneInfo | None = None,
+    expected: datetime | None = None,
 ) -> datetime | None:
     """
     Extract delivery time information from various formatted strings and return a datetime object.
@@ -90,6 +116,7 @@ def extract_delivery_datetime(
     2. Highlighted time only (HH:MM): "delivery at 17:23"
     3. Minutes until delivery: "delivery in approximately 3 minutes"
     Any other HH:MM mentioned in the text is used as a last resort.
+    "Highlighted" means in its own <span>, preferably a coloured one.
 
     Args:
         text: HTML text containing delivery time information
@@ -99,6 +126,13 @@ def extract_delivery_datetime(
             placed on its day. Defaults to the current time.
         tz: The shop's local timezone, which clock times in the text are in.
             Defaults to Europe/Prague (Rohlík.cz).
+        expected: The start of the order's booked delivery slot, if known.
+            When given, every clock time is placed on the day that puts it
+            closest to the slot, and a date in the text is not used: the slot
+            already knows the day, whereas reading the day from the text or
+            from ``received_at`` can be a day off (issue #106), and dates are
+            not written the same way in every shop's language. Relative
+            ("in 3 minutes") messages do not use it.
 
     Returns:
         A timezone-aware datetime object representing the delivery time, or None if no valid time found
@@ -117,11 +151,24 @@ def extract_delivery_datetime(
     local_tz = tz or ZoneInfo('Europe/Prague')
     now = datetime.now(tz=local_tz)
     received_at = received_at.astimezone(local_tz) if received_at is not None else now
+    expected = expected.astimezone(local_tz) if expected is not None else None
+
+    date_matches = (
+        _HIGHLIGHTED_DATE_PATTERN.findall(clean_text) or _SPAN_DATE_PATTERN.findall(clean_text)
+    )
+    time_matches = (
+        _HIGHLIGHTED_TIME_PATTERN.findall(clean_text) or _SPAN_TIME_PATTERN.findall(clean_text)
+    )
+
+    # Booked slot known: it decides the day, so only the clock time is read.
+    if expected is not None and time_matches:
+        try:
+            hour, minute = map(int, time_matches[0].split(':'))
+            return _closest_clock_time(hour, minute, expected)
+        except ValueError:
+            pass
 
     # Type 1: Date and time
-    date_matches = _HIGHLIGHTED_DATE_PATTERN.findall(clean_text)
-    time_matches = _HIGHLIGHTED_TIME_PATTERN.findall(clean_text)
-
     if date_matches and time_matches:
         try:
             day, month = map(int, date_matches[0].replace('.', ' ').split())  # e.g. "26.4."
@@ -154,6 +201,8 @@ def extract_delivery_datetime(
     if plain_time_matches:
         try:
             hour, minute = map(int, plain_time_matches[0].split(':'))
+            if expected is not None:
+                return _closest_clock_time(hour, minute, expected)
             return _resolve_clock_time(hour, minute, received_at)
         except ValueError:
             pass

@@ -382,3 +382,34 @@ async def test_overdue_minutes_announcement_is_due_now(
     entry.runtime_data.async_set_updated_data(copy.deepcopy(data))
     await hass.async_block_till_done()
     assert _state_time(hass, entity_id) == dt_util.now().replace(microsecond=0)
+
+
+async def test_time_only_announcement_lands_on_slot_day(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Issue #106: a time without a date is placed on the booked slot's day.
+
+    Received on the evening of 30.10. for a slot on 1.11., placing 09:15 after
+    the receipt time would report 31.10., a day early. The deprecated attribute
+    on Delivery Info must agree with the sensor.
+    """
+    prague = ZoneInfo("Europe/Prague")
+    freezer.move_to(datetime(2026, 10, 30, 19, 16, tzinfo=prague))
+    slot_start = datetime(2026, 11, 1, 9, 0, tzinfo=prague)
+    data = sample_api_data()
+    data["next_order"] = [_order(7001, slot_start)]
+    announcement = _announcement(7001, slot_start)
+    announcement["content"] = "Váš nákup přivezeme v <span>09:15</span>."
+    data["delivery_announcements"]["data"]["announcements"] = [announcement]
+
+    _, entity_id = await _setup_delivery_time(hass, data)
+
+    expected_eta = datetime(2026, 11, 1, 9, 15, tzinfo=prague)
+    assert _state_time(hass, entity_id) == expected_eta
+
+    info_entity_id = er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, "123456_delivery_info"
+    )
+    info_state = hass.states.get(info_entity_id)
+    assert info_state is not None
+    assert info_state.attributes["Delivery time (deprecated, use new entity)"] == expected_eta

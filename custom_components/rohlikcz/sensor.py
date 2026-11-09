@@ -27,6 +27,24 @@ _LOGGER = logging.getLogger(__name__)
 
 LIVE_ETA_STALE_AFTER = timedelta(hours=1)
 
+
+def announcement_slot_since(announcement: dict, upcoming_orders: list) -> datetime | None:
+    """Return the booked slot start of the order a delivery announcement is about.
+
+    That is the upcoming order with the announcement's ID or, failing that, the
+    only upcoming order, the same rule by which the Delivery Time sensor trusts
+    an announcement. The parser places the announced clock time on the slot's
+    day, so a wrong order here would move the ETA to another order's day.
+    """
+    orders = upcoming_orders or []
+    announcement_id = str(announcement.get("id", ""))
+    order = next((o for o in orders if str(o.get("id", "")) == announcement_id), None)
+    if order is None and len(orders) == 1:
+        order = orders[0]
+    if order is None:
+        return None
+    return parse_delivery_datetime_string((order.get("deliverySlot") or {}).get("since"))
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -110,6 +128,9 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
                 delivery_info[0].get("content", ""),
                 self._rohlik_account.announcement_received_at(delivery_info[0]),
                 tz=self._rohlik_account.timezone,
+                expected=announcement_slot_since(
+                    delivery_info[0], self._rohlik_account.data.get("next_order")
+                ),
             )
 
             if delivery_info[0].get("additionalContent", None):
@@ -301,6 +322,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
                     announcement.get("content", ""),
                     self._rohlik_account.announcement_received_at(announcement),
                     tz=self._rohlik_account.timezone,
+                    expected=announcement_slot_since(announcement, upcoming_orders),
                 )
                 if delivery_time is not None:
                     self._last_value = delivery_time

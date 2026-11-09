@@ -158,3 +158,115 @@ def test_literal_unicode_escapes_are_decoded() -> None:
 def test_no_eta(content: str) -> None:
     """Announcements without any time information yield None."""
     assert extract_delivery_datetime(content, RECEIVED_AT) is None
+
+
+# Issue #106: the announced date and time sit in spans without a colour, next to
+# the order-edit deadline "neděle 00:50". Received two days before delivery.
+ISSUE_106_CONTENT = (
+    "Váš nákup přivezeme <span>1.11.</span> v <span>09:00</span>. "
+    "Až do <span>neděle 00:50</span> si k objednávce můžete cokoliv přidat!"
+)
+ISSUE_106_RECEIVED_AT = datetime(2026, 10, 30, 19, 16, tzinfo=PRAGUE)
+ISSUE_106_SLOT = datetime(2026, 11, 1, 9, 0, tzinfo=PRAGUE)
+
+
+@pytest.mark.parametrize("expected", [None, ISSUE_106_SLOT])
+def test_unstyled_date_and_time(expected: datetime | None) -> None:
+    """Spans without a colour still carry the date, with or without the slot."""
+    assert extract_delivery_datetime(
+        ISSUE_106_CONTENT, ISSUE_106_RECEIVED_AT, expected=expected
+    ) == datetime(2026, 11, 1, 9, 0, tzinfo=PRAGUE)
+
+
+def test_unstyled_time_only() -> None:
+    """A bare time in a plain span is read like a coloured one."""
+    assert extract_delivery_datetime(
+        "Doručíme v <span>10:04</span>", RECEIVED_AT
+    ) == datetime(2026, 9, 20, 10, 4, tzinfo=PRAGUE)
+
+
+def test_coloured_span_preferred_over_plain_span() -> None:
+    """A plain-span time elsewhere in the text does not beat the coloured one."""
+    content = f"Až do <span>20:00</span> lze přidávat. Doručíme v {HIGHLIGHT.format('10:30')}."
+
+    assert extract_delivery_datetime(content, RECEIVED_AT) == datetime(
+        2026, 9, 20, 10, 30, tzinfo=PRAGUE
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "Váš nákup přivezeme v 09:15.",
+        "Váš nákup přivezeme v <span>09:15</span>.",
+        f"Váš nákup přivezeme v {HIGHLIGHT.format('09:15')}.",
+    ],
+)
+def test_clock_time_placed_on_slot_day(content: str) -> None:
+    """With the slot known, a time without a date lands on the slot's day.
+
+    Placing it after the receipt time instead would give tomorrow (31.10.).
+    """
+    assert extract_delivery_datetime(
+        content, ISSUE_106_RECEIVED_AT, expected=ISSUE_106_SLOT
+    ) == datetime(2026, 11, 1, 9, 15, tzinfo=PRAGUE)
+
+
+@pytest.mark.parametrize(
+    ("slot", "clock", "expected_eta"),
+    [
+        # Early courier before a just-after-midnight slot: the evening before.
+        (
+            datetime(2026, 9, 21, 0, 30, tzinfo=PRAGUE),
+            "23:50",
+            datetime(2026, 9, 20, 23, 50, tzinfo=PRAGUE),
+        ),
+        # Late courier after a late-evening slot: just after midnight.
+        (
+            datetime(2026, 9, 20, 23, 30, tzinfo=PRAGUE),
+            "00:20",
+            datetime(2026, 9, 21, 0, 20, tzinfo=PRAGUE),
+        ),
+    ],
+)
+def test_clock_time_closest_to_slot_across_midnight(
+    slot: datetime, clock: str, expected_eta: datetime
+) -> None:
+    """The day is the one that puts the clock time closest to the slot."""
+    content = f"Doručíme v {HIGHLIGHT.format(clock)}"
+
+    assert extract_delivery_datetime(content, RECEIVED_AT, expected=slot) == expected_eta
+
+
+def test_slot_day_beats_date_in_text() -> None:
+    """With the slot known, a date that disagrees with it is not trusted.
+
+    "11.1." is how a month-first language might write 1 November.
+    """
+    content = f"Doručíme {HIGHLIGHT.format('11.1.')} v {HIGHLIGHT.format('09:00')}"
+
+    assert extract_delivery_datetime(
+        content, ISSUE_106_RECEIVED_AT, expected=ISSUE_106_SLOT
+    ) == datetime(2026, 11, 1, 9, 0, tzinfo=PRAGUE)
+
+
+def test_slot_in_another_timezone_is_converted() -> None:
+    """The slot's day is taken in the shop's timezone, not the slot's own offset.
+
+    23:30 UTC on 31.10. is 00:30 on 1.11. in Prague.
+    """
+    slot = datetime(2026, 10, 31, 23, 30, tzinfo=ZoneInfo("UTC"))
+    content = f"Doručíme v {HIGHLIGHT.format('00:45')}"
+
+    assert extract_delivery_datetime(
+        content, ISSUE_106_RECEIVED_AT, expected=slot
+    ) == datetime(2026, 11, 1, 0, 45, tzinfo=PRAGUE)
+
+
+def test_countdown_ignores_slot() -> None:
+    """A relative countdown counts from receipt, wherever the slot is."""
+    slot = RECEIVED_AT + timedelta(hours=5)
+
+    assert extract_delivery_datetime(
+        "Váš nákup doručíme přibližně za 2 minuty.", RECEIVED_AT, expected=slot
+    ) == RECEIVED_AT + timedelta(minutes=2)
