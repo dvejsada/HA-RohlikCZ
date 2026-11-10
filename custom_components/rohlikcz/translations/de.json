@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Rohlík-Konto",
+        "title": "Shop-Konto",
         "description": "Wähle deinen Shop und gib die zugehörigen Zugangsdaten ein.",
         "data": {
           "site": "Shop",
@@ -29,7 +29,7 @@
         }
       },
       "reauth_confirm": {
-        "title": "Rohlík-Konto erneut authentifizieren",
+        "title": "Shop-Konto erneut authentifizieren",
         "description": "Die gespeicherten Zugangsdaten für {email} sind nicht mehr gültig. Gib das Passwort erneut ein.",
         "data": {
           "password": "Passwort"
@@ -52,7 +52,7 @@
     "abort": {
       "already_configured": "Das Konto ist bereits eingerichtet",
       "reauth_successful": "Erneute Authentifizierung erfolgreich",
-      "wrong_account": "Die Zugangsdaten gehören zu einem anderen Rohlík-Konto",
+      "wrong_account": "Die Zugangsdaten gehören zu einem anderen Shop-Konto",
       "reconfigure_successful": "Das Konto wurde zum ausgewählten Shop verschoben"
     }
   },
@@ -244,7 +244,7 @@
     },
     "calendar": {
       "delivery_calendar": {
-        "name": "Bestellkalender"
+        "name": "Lieferkalender"
       }
     }
   }
