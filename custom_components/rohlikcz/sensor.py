@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNAVAILABLE, UnitOfTime
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.util import dt as dt_util
@@ -21,17 +20,15 @@ from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EX
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
     ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING
-from .entity import BaseEntity
+from .entity import BaseEntity, EtaTimedEntity
 from .hub import OrderStore, RohlikAccount
-from .eta import announcement_slot, announcements_of  # noqa: F401 - announcement_slot re-exported
+from .eta import MAX_OVERDUE, announcement_slot, announcements_of
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
 
 _LOGGER = logging.getLogger(__name__)
 
 #: Delivery Time Remaining ticks every minute only this close to the ETA.
 REMAINING_TICK_WINDOW = timedelta(minutes=90)
-#: Delivery Time Remaining and Last Mile give up this long after the ETA.
-MAX_OVERDUE = timedelta(minutes=60)
 
 
 async def async_setup_entry(
@@ -238,16 +235,6 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
     def icon(self) -> str:
         return ICON_DELIVERY_TIME
 
-    @property
-    def extra_restore_state_data(self) -> DeliveryTimeExtraStoredData:
-        """Return delivery time data to restore after a restart."""
-        tracker = self._rohlik_account.eta
-        return DeliveryTimeExtraStoredData(
-            tracker.last_live_value,
-            tracker.last_live_order_id,
-            tracker.last_live_slot_since,
-        )
-
     async def async_added_to_hass(self) -> None:
         """Migrate state stored by older versions into the ETA tracker."""
         await super().async_added_to_hass()
@@ -283,7 +270,7 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
             self._rohlik_account.async_update_listeners()
 
 
-class DeliveryTimeRemaining(BaseEntity, SensorEntity):
+class DeliveryTimeRemaining(EtaTimedEntity, SensorEntity):
     """Minutes until the expected delivery time, counted down locally."""
 
     _attr_translation_key = "delivery_time_remaining"
@@ -292,27 +279,25 @@ class DeliveryTimeRemaining(BaseEntity, SensorEntity):
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_suggested_display_precision = 0
 
-    def __init__(self, rohlik_account: RohlikAccount) -> None:
-        super().__init__(rohlik_account)
-        self._unsub_timer: CALLBACK_TYPE | None = None
-
-    def _seconds_left(self) -> float | None:
+    def _eta_utc(self) -> datetime | None:
         eta = self._rohlik_account.eta.eta
-        if eta is None:
-            return None
-        return eta.timestamp() - dt_util.utcnow().timestamp()
+        # In UTC: wall-clock arithmetic on a local time ignores DST.
+        return dt_util.as_utc(eta) if eta is not None else None
 
     @property
     def native_value(self) -> int | None:
         """Whole minutes left (rounded up); 0 once due; unknown when long overdue."""
-        seconds = self._seconds_left()
-        if seconds is None or seconds < -MAX_OVERDUE.total_seconds():
+        if (eta := self._eta_utc()) is None:
+            return None
+        seconds = (eta - dt_util.utcnow()).total_seconds()
+        if seconds < -MAX_OVERDUE.total_seconds():
             return None
         return max(0, math.ceil(seconds / 60))
 
     @property
     def available(self) -> bool:
-        # One failed refresh must not interrupt a countdown that runs locally.
+        # The countdown runs locally, so it survives a failed refresh even
+        # when the ETA only comes from the booked slot.
         return super().available or self._rohlik_account.eta.eta is not None
 
     @property
@@ -323,56 +308,21 @@ class DeliveryTimeRemaining(BaseEntity, SensorEntity):
     def icon(self) -> str:
         return ICON_DELIVERY_REMAINING
 
-    @callback
     def _next_change(self) -> datetime | None:
         """Return when the value next changes, within the ticking window."""
-        eta = self._rohlik_account.eta.eta
-        seconds = self._seconds_left()
-        if eta is None or seconds is None:
+        if (eta := self._eta_utc()) is None:
             return None
+        seconds = (eta - dt_util.utcnow()).total_seconds()
         if seconds > REMAINING_TICK_WINDOW.total_seconds():
             # Far away: no per-minute writes, start ticking at the window.
             return eta - REMAINING_TICK_WINDOW
         if seconds > 0:
             # The value is ceil(seconds / 60); it drops when the remaining
             # time reaches the next whole minute before the ETA.
-            minutes = math.ceil(seconds / 60)
-            return eta - timedelta(minutes=minutes - 1)
+            return eta - timedelta(minutes=math.ceil(seconds / 60) - 1)
         if seconds >= -MAX_OVERDUE.total_seconds():
             return eta + MAX_OVERDUE + timedelta(seconds=1)
         return None
-
-    @callback
-    def _schedule_update(self) -> None:
-        if self._unsub_timer is not None:
-            self._unsub_timer()
-            self._unsub_timer = None
-        if (when := self._next_change()) is not None:
-            self._unsub_timer = async_track_point_in_time(
-                self.hass, self._handle_tick, when
-            )
-
-    @callback
-    def _handle_tick(self, _now: datetime) -> None:
-        self._unsub_timer = None
-        self.async_write_ha_state()
-        self._schedule_update()
-
-    @callback
-    def _cancel_timer(self) -> None:
-        if self._unsub_timer is not None:
-            self._unsub_timer()
-            self._unsub_timer = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self.async_on_remove(self._cancel_timer)
-        self._schedule_update()
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self.async_write_ha_state()
-        self._schedule_update()
 
 
 @dataclass(frozen=True, kw_only=True)

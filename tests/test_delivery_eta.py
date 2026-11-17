@@ -486,3 +486,61 @@ async def test_remaining_across_dst_change(hass: HomeAssistant, freezer) -> None
     await _setup(hass, data)
 
     assert _remaining(hass) == "40"
+
+
+async def test_live_eta_timers_across_dst_change(hass: HomeAssistant, freezer) -> None:
+    """Ticks and Last Mile use real time when clocks go back overnight."""
+    utc = ZoneInfo("UTC")
+    # 02:50 summer time (00:50 UTC); the courier announces 03:10 winter time
+    # (02:10 UTC), i.e. 80 minutes later.
+    freezer.move_to(datetime(2026, 10, 25, 0, 50, tzinfo=utc))
+    slot_since = datetime(2026, 10, 25, 3, 0, tzinfo=PRAGUE)
+    data = sample_api_data()
+    data["next_order"] = [_order(7001, slot_since, hours=1)]
+    data["delivery_announcements"]["data"]["announcements"] = [
+        _announcement(7001, datetime(2026, 10, 25, 3, 10, tzinfo=PRAGUE))
+    ]
+    await _setup(hass, data)
+    assert _remaining(hass) == "80"
+
+    await _move_to(hass, freezer, datetime(2026, 10, 25, 0, 51, tzinfo=utc))
+    assert _remaining(hass) == "79"
+    await _move_to(hass, freezer, datetime(2026, 10, 25, 2, 4, 59, tzinfo=utc))
+    assert _last_mile(hass) == STATE_OFF
+    await _move_to(hass, freezer, datetime(2026, 10, 25, 2, 5, tzinfo=utc))
+    assert _last_mile(hass) == STATE_ON
+    assert _remaining(hass) == "5"
+
+
+async def test_remove_entry_deletes_eta_store(
+    hass: HomeAssistant, freezer, hass_storage
+) -> None:
+    freezer.move_to(NOW)
+    entry = await _setup(hass, _data())
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    key = f"{DOMAIN}_{entry.entry_id}_eta"
+    assert key in hass_storage
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert key not in hass_storage
+
+
+async def test_update_after_unload_does_not_save(
+    hass: HomeAssistant, freezer, hass_storage
+) -> None:
+    """A late update on an unloaded coordinator leaves the stored ETA alone."""
+    freezer.move_to(NOW)
+    data = _data()
+    entry = await _setup(hass, data)
+    account = entry.runtime_data
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    key = f"{DOMAIN}_{entry.entry_id}_eta"
+    saved = copy.deepcopy(hass_storage[key])
+
+    later = ETA + timedelta(minutes=20)
+    account.async_set_updated_data(_with_announcements(data, [_announcement(7001, later)]))
+    await _move_to(hass, freezer, NOW + timedelta(seconds=30))
+    assert hass_storage[key] == saved

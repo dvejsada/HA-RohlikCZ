@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
+
+from homeassistant.core import CALLBACK_TYPE, callback
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .hub import RohlikAccount
@@ -27,3 +31,53 @@ class BaseEntity(CoordinatorEntity[RohlikAccount]):
         self._rohlik_account = rohlik_account
         self._attr_device_info = rohlik_account.device_info
         self._attr_unique_id = f"{rohlik_account.unique_id}_{self.translation_key}"
+
+
+class EtaTimedEntity(BaseEntity):
+    """Entity whose state changes with the clock relative to the delivery ETA.
+
+    Subclasses return the next moment their state changes from
+    ``_next_change()``; one point-in-time timer is kept armed for it and
+    re-armed on every coordinator update. It also stays available through a
+    failed refresh while a live ETA is known, so automations triggered by it
+    do not fire again on unavailable -> on.
+    """
+
+    _unsub_timer: CALLBACK_TYPE | None = None
+
+    def _next_change(self) -> datetime | None:
+        raise NotImplementedError
+
+    @property
+    def available(self) -> bool:
+        return super().available or self._rohlik_account.eta.is_live
+
+    @callback
+    def _cancel_timer(self) -> None:
+        if self._unsub_timer is not None:
+            self._unsub_timer()
+            self._unsub_timer = None
+
+    @callback
+    def _schedule_update(self) -> None:
+        self._cancel_timer()
+        if (when := self._next_change()) is not None:
+            self._unsub_timer = async_track_point_in_time(
+                self.hass, self._handle_tick, when
+            )
+
+    @callback
+    def _handle_tick(self, _now: datetime) -> None:
+        self._unsub_timer = None
+        self.async_write_ha_state()
+        self._schedule_update()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self._cancel_timer)
+        self._schedule_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+        self._schedule_update()

@@ -16,6 +16,7 @@ from .const import (
     CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL,
     CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD,
 )
+from .eta import async_remove_eta_store, eta_storage_key
 from .hub import RohlikAccount
 from .services import register_services
 
@@ -129,3 +130,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> b
     if unload_ok:
         await entry.runtime_data.async_close()
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the entry's stored delivery ETA state when it is removed."""
+    await async_remove_eta_store(hass, eta_storage_key(entry.entry_id))

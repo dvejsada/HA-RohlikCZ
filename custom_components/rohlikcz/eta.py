@@ -26,6 +26,9 @@ _LOGGER = logging.getLogger(__name__)
 #: A live ETA is kept at most this long after it has passed.
 LIVE_ETA_STALE_AFTER = timedelta(hours=1)
 
+#: Delivery Time Remaining and Delivery Last Mile give up this long after the ETA.
+MAX_OVERDUE = timedelta(minutes=60)
+
 #: Storage schema version for the ETA tracker.
 ETA_STORE_VERSION = 1
 
@@ -34,6 +37,11 @@ _SAVE_DELAY = 10
 
 #: Where the current ETA came from.
 EtaSource = Literal["announcement", "slot", "last_known"]
+
+
+def eta_storage_key(entry_id: str) -> str:
+    """Return the storage key of a config entry's ETA state."""
+    return f"rohlikcz_{entry_id}_eta"
 
 
 def announcements_of(data: dict | None) -> list:
@@ -106,7 +114,6 @@ class DeliveryEtaTracker:
         self._eta: datetime | None = None
         self._source: EtaSource | None = None
         self._order_id: str | None = None
-        self._slot_till: datetime | None = None
 
     # ------------------------------------------------------------------ results
 
@@ -131,15 +138,11 @@ class DeliveryEtaTracker:
         return self._order_id
 
     @property
-    def slot_till(self) -> datetime | None:
-        """End of the soonest upcoming order's booked slot, if known."""
-        return self._slot_till
-
-    @property
     def stale_at(self) -> datetime | None:
         """When the kept live ETA expires, so resolve() must run again."""
         if self.is_live and self.last_live_value is not None:
-            return self.last_live_value + LIVE_ETA_STALE_AFTER
+            # In UTC: wall-clock arithmetic on a local time ignores DST.
+            return dt_util.as_utc(self.last_live_value) + LIVE_ETA_STALE_AFTER
         return None
 
     def as_diagnostics(self) -> dict[str, Any]:
@@ -187,18 +190,20 @@ class DeliveryEtaTracker:
         """Adopt state restored by the Delivery Time entity (pre-store versions).
 
         Used only once, when no stored tracker state exists yet. Returns True
-        when the state was adopted and the ETA should be resolved again.
+        when legacy state was adopted and the ETA should be resolved again.
         """
         if self.restored:
             return False
         self.restored = True
+        self.async_schedule_save()
+        if last_value is None and last_live_value is None:
+            return False
         if self.last_value is None:
             self.last_value = last_value
         if self.last_live_value is None and last_live_value is not None:
             self.last_live_value = last_live_value
             self.last_live_order_id = last_live_order_id
             self.last_live_slot_since = last_live_slot_since
-        self.async_schedule_save()
         return True
 
     def _data_to_save(self) -> dict:
@@ -218,10 +223,15 @@ class DeliveryEtaTracker:
         if self._store is not None:
             self._store.async_delay_save(self._data_to_save, _SAVE_DELAY)
 
-    async def async_save(self) -> None:
-        """Write the state to disk now (used on unload)."""
+    async def async_close(self) -> None:
+        """Write the state to disk now and stop saving (used on unload).
+
+        A late update on an unloaded coordinator must not overwrite the file
+        the reloaded entry is already using.
+        """
         if self._store is not None:
-            await self._store.async_save(self._data_to_save())
+            store, self._store = self._store, None
+            await store.async_save(self._data_to_save())
 
     # ------------------------------------------------------------------ resolve
 
@@ -260,26 +270,18 @@ class DeliveryEtaTracker:
         data: dict | None,
         received_at: Callable[[dict], datetime],
         tz: ZoneInfo,
-    ) -> bool:
-        """Recompute the ETA from coordinator data. Returns True if it changed.
+    ) -> None:
+        """Recompute the ETA from coordinator data.
 
         With multiple concurrent orders the announcement may relate to a later
         order rather than the soonest one; then the soonest order's slot is
         used. When the announcement is cleared, its last live ETA is kept only
         while the same order remains the soonest upcoming order.
         """
-        before = (
-            self._eta, self._source, self._order_id,
-            self.last_value, self.last_live_value,
-        )
+        before = (self.last_value, self.last_live_value, self.last_live_order_id)
         self._eta, self._source = self._resolve(data or {}, received_at, tz)
-        after = (
-            self._eta, self._source, self._order_id,
-            self.last_value, self.last_live_value,
-        )
-        if after[3:] != before[3:]:
+        if (self.last_value, self.last_live_value, self.last_live_order_id) != before:
             self.async_schedule_save()
-        return after != before
 
     def _resolve(
         self,
@@ -299,7 +301,6 @@ class DeliveryEtaTracker:
         delivery_slot = (earliest_order or {}).get("deliverySlot") or {}
         slot_since = parse_delivery_datetime_string(delivery_slot.get("since"))
         self._order_id = earliest_order_id
-        self._slot_till = parse_delivery_datetime_string(delivery_slot.get("till"))
 
         if (
             self.last_live_order_id is not None
@@ -358,3 +359,8 @@ class DeliveryEtaTracker:
         if not upcoming_orders:
             self._clear_last_live_value()
         return None, None
+
+
+async def async_remove_eta_store(hass: HomeAssistant, storage_key: str) -> None:
+    """Delete a config entry's stored ETA state."""
+    await Store(hass, ETA_STORE_VERSION, storage_key).async_remove()

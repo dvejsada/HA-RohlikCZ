@@ -87,7 +87,7 @@ The same **Configure** dialog also holds the delivery-time settings:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Last mile lead time** | 5 min | How long before the expected delivery time the **Delivery Last Mile** sensor turns on (1–30 minutes) |
-| **Auto-refresh delivery time** | On | Refresh the courier's delivery announcement automatically from 30 minutes before the expected delivery until 10 minutes after it (or until 10 minutes after the booked slot ends, if that is later) |
+| **Auto-refresh delivery time** | On | Refresh the courier's delivery announcement automatically from 30 minutes before the expected delivery until 10 minutes after it (until the courier announces a time, the booked slot start counts as the expected delivery) |
 | **Delivery time refresh interval** | 60 s | How often the automatic refresh runs (30–300 seconds); each refresh is a single lightweight request |
 
 ---
