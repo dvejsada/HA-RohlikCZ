@@ -1,98 +1,106 @@
-# Delivery countdown + "Last mile" entities — plan
+# Delivery countdown + "Last mile" entities — plan (rev. 2, after review)
 
 Source: GitHub discussion request (@xdanik's AWTRIX setup) asking for a built-in
 remaining-minutes sensor and an ETA-based "Last mile" binary sensor.
 
 ## Decision: integration only, no API change
 
-`rohlik_api_python` only exposes `delivery.get_announcements()` returning raw
-announcement JSON. Everything that turns it into an ETA — HTML/text parsing
-(`utils.extract_delivery_datetime`), placing the clock time into the booked slot,
-matching the announcement to the soonest order, preserving the last live ETA after
-Rohlík clears the announcement, and restoring it after restart — already lives in
-the integration (`sensor.DeliveryTime`). Countdown/last-mile are pure derivations
-of that ETA plus wall clock, i.e. HA presentation concerns. No new endpoint or
-data is needed, so the library stays untouched.
+`rohlik_api_python` only returns the raw announcement envelope
+(`services/delivery.py:get_announcements`). All ETA derivation — parsing
+(`utils.extract_delivery_datetime`), slot placement, order matching, preserving
+the last live ETA, restore — lives in the integration. Countdown/last-mile are
+derivations of that ETA plus the clock. The cheap poll already exists
+(`hub.refresh_delivery_times`). No library change.
 
-## Step 1 — extract a single ETA source of truth (refactor, no behaviour change)
+Note: `get_announcements()` returns `None` on HTTP error and `get_data` stores it,
+so `data["delivery_announcements"]` can be `None` — all new code (and the moved
+code) must read it defensively, as `hub._track_announcement_arrivals` does.
 
-Today the ETA is computed inside `DeliveryTime.native_value`, which also mutates
-state (`_last_value`, `_last_live_*`). New entities must use the *same* value, not
-re-derive it, or they will disagree (e.g. after the announcement disappears).
+## Step 1 — coordinator-owned `DeliveryEtaTracker` (refactor, no behaviour change)
 
-- New `DeliveryEtaTracker` (in `utils.py` or new `eta.py`), owned by
-  `RohlikAccount` (`account.eta`):
-  - holds `_last_value`, `_last_live_value`, `_last_live_order_id`,
-    `_last_live_slot_since` and the current logic from `native_value`;
-  - `resolve(data) -> datetime | None` recomputed once per coordinator update
-    (call from `_async_update_data` / `refresh_delivery_times` before
-    `async_update_listeners`, or lazily cached per `data` identity);
-  - exposes `eta`, `order_id`, `is_live` (announcement-based vs slot fallback).
-- `DeliveryTime` becomes a thin reader of `account.eta`; it keeps the
-  `RestoreEntity`/`ExtraStoredData` and on `async_added_to_hass` seeds the
-  tracker (`account.eta.restore(...)`). Existing tests in
-  `tests/test_delivery_time.py` must pass unchanged (adapt only the fixture
-  wiring).
+- New `eta.py`: `DeliveryEtaTracker`, owned by `RohlikAccount` (`account.eta`).
+  Holds `last_value`, `last_live_value/order_id/slot_since` and the logic now in
+  `DeliveryTime.native_value`.
+- `resolve(now)` is the **only mutator**; `eta`, `is_live` (announcement-derived
+  incl. preserved value), `order_id`, `source` are plain cached reads.
+- Called from the existing `RohlikAccount.async_update_listeners` override, after
+  `_track_announcement_arrivals()` — the single choke point that also covers
+  `async_set_updated_data` (tests) and the in-place mutations in
+  `refresh_delivery_times` / `refresh_slots`. Not from `_async_update_data`
+  (`self.data` not yet set) and no identity-based caching (data is mutated in
+  place and the result is time-dependent).
+- Time dependence: the tracker schedules its own re-resolve + notify at
+  `last_live_value + LIVE_ETA_STALE_AFTER` (and for overdue relative ETAs), so
+  all entities drop a stale ETA together without waiting for a refresh. Timer
+  cancelled on unload (`entry.async_on_unload`).
+- **Persistence moves to the tracker**: `helpers.storage.Store` (same pattern as
+  `OrderStore`), loaded in `async_setup_entry` *before*
+  `async_config_entry_first_refresh`, so the first resolve already has restored
+  state → no slot-fallback flap after restart. Also persist
+  `_announcement_arrivals` (so an unchanged "za 2 minuty" doesn't restart its
+  clock on reboot). One-time migration: if Store is empty, `DeliveryTime` seeds
+  it from its old `ExtraStoredData` and triggers a re-resolve.
+- Keep parity quirks for now (only `announcements[0]` considered). Follow-up:
+  pick the announcement by id match with the soonest order.
+- DST: use timestamps / `dt_util.utcnow()` for all deltas and the stale check
+  (fixes latent same-tzinfo issue at current `sensor.py` stale check).
+- `DeliveryTime` becomes a thin reader. Keep `dt_util` import in `sensor.py`
+  (tests patch `custom_components.rohlikcz.sensor.dt_util.now`). Existing
+  `tests/test_delivery_time.py` must pass, incl. reload/restore tests.
+- Add tracker state to `diagnostics.py`.
 
-## Step 2 — `sensor.<account>_delivery_remaining` ("Delivery Time Remaining")
+## Step 2 — `sensor.*_delivery_remaining` ("Delivery Time Remaining")
 
-- `device_class=DURATION`, `native_unit_of_measurement=MINUTES`, no state_class
-  (no long-term statistics), `suggested_display_precision=0`.
-- Value: `ceil((eta - now) / 60s)` while an upcoming order with an ETA exists,
-  else `None` (unknown). Clamp at 0 (don't go negative); add attribute
-  `overdue_minutes` when the courier is late, plus `eta` and `source`
-  (`announcement` / `slot`) attributes.
-- Ticking: local timer, no extra API calls. `async_track_time_change(second=0)`
-  (aligned to the minute) registered only while ETA is within a window (e.g. ≤ 3 h
-  ahead or overdue); otherwise schedule a single `async_track_point_in_time` for
-  the window start. Re-arm on every coordinator update. Cancel on removal.
-  Rationale: avoids writing a state every minute for an order days away
-  (recorder churn); exclude `eta` attr from recorder via `_unrecorded_attributes`.
+- `device_class=DURATION`, unit minutes, no `state_class`, precision 0.
+- Value: `ceil((eta − now)/60 s)`, clamped at 0; `None` with no order, or once
+  more than `MAX_OVERDUE` (60 min) past the ETA. Attribute: `source`
+  (`announcement` / `slot`) only.
+- One `async_track_point_in_time` handle: next minute boundary inside the window
+  (ETA ≤ 90 min ahead), otherwise window start. Re-armed in
+  `_handle_coordinator_update` and in the `@callback` timer; cancel via
+  `async_on_remove`. Write state only on change.
 
-## Step 3 — `binary_sensor.<account>_last_mile` ("Delivery Last Mile")
+## Step 3 — `binary_sensor.*_last_mile` ("Delivery Last Mile")
 
-- On when: an upcoming order exists AND `now >= eta - LAST_MILE_LEAD` (default
-  5 min) AND `now <= eta + LAST_MILE_MAX_OVERDUE` (e.g. 60 min, matches
-  `LIVE_ETA_STALE_AFTER`) — prevents getting stuck on if the order never leaves
-  `next_order`.
-- Off when the order disappears (delivered) or the soonest order id changes.
-- Timers: `async_track_point_in_time` at `eta - lead` and at `eta + max_overdue`,
-  re-scheduled whenever the tracker's ETA changes.
-- Attributes: `eta`, `order_id`, `lead_minutes`.
-- Optional (decide in review): make the lead time configurable in the options flow
-  (`last_mile_minutes`, 1–30, default 5). Use case in the request (auto-open
-  building door) depends on it, so an option is cheap and useful.
+- On when: upcoming order AND `tracker.is_live` AND
+  `eta − 5 min ≤ now ≤ eta + 60 min`. Slot fallback never turns it on (it is not
+  a courier position; door-opening must not trigger on it).
+- Off when the order disappears / soonest order changes (derived from tracker).
+- One point-in-time timer: next transition (`eta − lead`, then `eta + max`).
+- Lead is a constant 5 min (users wanting another lead use
+  `remaining below: N`). Configurable later via a `number` entity if requested.
+- Availability: stays available while the tracker holds a live ETA, so one failed
+  10-min refresh doesn't cause on → unavailable → on (re-firing door automations).
 
-## Step 4 (optional, separate PR) — built-in ETA polling near delivery
+## Step 4 — built-in ETA polling near delivery (in scope)
 
-The commenter (and our `automations/update_delivery_times.yaml`) poll
-`update_delivery_times` every minute from ETA−30 to ETA+10. Could be an options
-toggle "Refresh delivery time automatically near delivery" (default off) that
-runs `refresh_delivery_times()` every 60 s inside that window, driven by the same
-tracker. Keeps the countdown/last-mile accurate without user automations. Default
-off to avoid surprising API load; keep the example automation in docs.
+With the 10-min coordinator interval the ETA can be 10 min old, which makes a
+5-min last-mile unreliable alone. Coordinator-owned poller: while an order has an
+ETA, call `refresh_delivery_times()` every 60 s from ETA−30 to ETA+10 (~40 light
+requests per delivery). Errors logged, not raised; cancelled on unload.
+Options-flow toggle; default **TBD by maintainer** (proposal: on). Keep the
+example automation for users who disable it.
 
 ## Step 5 — translations, docs, tests
 
-- `translations/*.json` (en, cs + every existing language file; `test_translations`
-  enforces parity): `delivery_remaining`, `last_mile`, option labels.
-- `icons.json`/const icons: `mdi:timer-outline`, `mdi:truck-fast`.
-- README: add to sensor/binary sensor tables, short "doorbell / countdown"
-  example; note they update locally between API refreshes and become precise only
-  while announcements arrive (link the polling automation / option).
-- Tests (freezegun / `async_fire_time_changed`):
-  - tracker parity with old `native_value` behaviour (existing suite);
-  - remaining: counts down per minute without API calls, unknown with no order,
-    clamps at 0 + `overdue_minutes`, re-anchors when a new ETA arrives, no
-    per-minute writes when ETA is far ahead;
-  - last mile: off → on at ETA−5, follows ETA moving later (turns back off),
-    turns off when order disappears and after max overdue, multiple concurrent
-    orders use the soonest one, restart restores via tracker.
+- `translations/en.json`, `cs.json`, `de.json` (test enforces en/de parity).
+- Icons via `const.py` constants + `icon` property (existing convention).
+- README: tables, doorbell/countdown example, note that "in N minutes"
+  announcements are parsed only in Czech (lower precision elsewhere).
+- Tests (`async_fire_time_changed` / freezer):
+  - existing DeliveryTime suite unchanged;
+  - countdown ticks without API calls; unknown with no order; clamp 0 → None
+    after max overdue; re-anchors on new ETA; no per-minute writes when far away;
+  - last-mile on at ETA−5, follows ETA moving later, never on from slot fallback,
+    off when order disappears / after max overdue, soonest of concurrent orders;
+  - restart inside last-mile window → no flap; in-place
+    `refresh_delivery_times` updates new entities; stale transition without
+    coordinator update; DST-boundary countdown; `delivery_announcements=None`;
+    timers/poller cancelled on unload.
 
-## Open questions for review
+## Resolved questions
 
-1. Clamp remaining at 0 vs allow negative values?
-2. Last-mile lead time: constant vs options flow?
-3. Should Step 4 (auto polling) be in scope now?
-4. Tracker owned by coordinator vs new entities reading `DeliveryTime` state via
-   `hass.states` (rejected: depends on entity id, breaks if disabled).
+1. Clamp at 0, then `None` after max overdue (no negative values).
+2. Constant 5-min lead (no options field).
+3. Built-in polling in scope (Step 4); default to be decided.
+4. Tracker owned by coordinator, with its own persistence.
