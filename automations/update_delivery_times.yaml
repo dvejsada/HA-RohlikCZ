@@ -4,7 +4,9 @@ description: >-
   refresh can be off right before the courier arrives. This automation polls
   the lightweight update_delivery_times action every minute during the last
   30 minutes before the expected delivery, keeping the delivery time sensor
-  close to the real ETA.
+  close to the real ETA. The integration does this by itself when the
+  "Auto-refresh delivery time" option is on (the default), so you only need
+  this automation if you turned that option off.
 mode: single
 triggers:
   - trigger: time_pattern

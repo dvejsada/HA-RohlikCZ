@@ -80,6 +80,16 @@ After setup you can enable **Spending Analytics** at any time via the integratio
 
 Enabling analytics triggers a one-time download of your full order history (this may take several minutes).
 
+### Delivery time settings
+
+The same **Configure** dialog also holds the delivery-time settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Last mile lead time** | 5 min | How long before the expected delivery time the **Delivery Last Mile** sensor turns on (1–30 minutes) |
+| **Auto-refresh delivery time** | On | Refresh the courier's delivery announcement automatically from 30 minutes before the expected delivery until 10 minutes after it (or until 10 minutes after the booked slot ends, if that is later) |
+| **Delivery time refresh interval** | 60 s | How often the automatic refresh runs (30–300 seconds); each refresh is a single lightweight request |
+
 ---
 
 ## 📊 Entities
@@ -94,6 +104,7 @@ Enabling analytics triggers a one-time download of your full order history (this
 | **Timeslot Reservation** | Active when you have a reserved delivery timeslot |
 | **Parents Club** | Active when you are a member of the Parents Club |
 | **Express Available** | Active when express delivery is currently available in your area |
+| **Delivery Last Mile** | Active from the configured lead time (default 5 minutes) before the courier's expected delivery time until the order is delivered (at most an hour after the expected time). Only a courier announcement turns it on, never the booked slot alone — handy as a condition for opening the building entrance when the doorbell rings |
 
 ### 🟢 Sensors
 
@@ -116,6 +127,7 @@ Enabling analytics triggers a one-time download of your full order history (this
 | **Delivery Slot Start** | Start of the delivery window for your next order |
 | **Delivery Slot End** | End of the delivery window for your next order |
 | **Delivery Time** | Predicted exact delivery time for your next order |
+| **Delivery Time Remaining** | Minutes until the **Delivery Time**, counted down locally every minute between refreshes (within 90 minutes of delivery). Shows 0 when the delivery is due and unknown an hour after it; the `source` attribute says whether the time comes from the courier's announcement or only the booked slot |
 | **Monthly Spent** | Total amount spent this month |
 | **Yearly Spent** | Total amount spent this year *(requires Spending Analytics)* |
 | **All Time Spent** | Total spent across all tracked orders *(requires Spending Analytics)*; the `by_year` attribute breaks the total down per year (`total` and `order_count` per year) |
@@ -174,7 +186,7 @@ Each sensor's attributes contain the top N items (configurable, default 10) sort
 > Want a notification the moment express delivery opens up? See [`automations/refresh_slots.yaml`](automations/refresh_slots.yaml) for an example that polls `refresh_slots` every 15 seconds while armed and notifies you when the **Express Available** sensor turns on.
 
 > [!TIP]
-> Delivery ETA shifting around before the courier arrives? See [`automations/update_delivery_times.yaml`](automations/update_delivery_times.yaml) for an example that polls `update_delivery_times` every minute during the last 30 minutes before delivery so the **Delivery Time** sensor stays accurate.
+> The delivery ETA shifts a lot right before the courier arrives. With **Auto-refresh delivery time** on (the default), the integration keeps the delivery-time sensors up to date by itself. If you turn it off, [`automations/update_delivery_times.yaml`](automations/update_delivery_times.yaml) is an example that polls `update_delivery_times` yourself instead.
 
 ---
 

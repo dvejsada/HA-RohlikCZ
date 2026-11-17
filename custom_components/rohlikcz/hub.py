@@ -9,19 +9,29 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.event import async_call_later, async_track_point_in_time
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError, Site
 
-from .const import DOMAIN, get_site
+from .const import (
+    DOMAIN, get_site,
+    DEFAULT_AUTO_REFRESH_ETA, DEFAULT_ETA_REFRESH_INTERVAL, DEFAULT_LAST_MILE_LEAD,
+)
+from .eta import DeliveryEtaTracker, announcements_of
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)
+
+#: Automatic ETA refresh runs from this long before the ETA ...
+ETA_POLL_BEFORE = timedelta(minutes=30)
+#: ... until this long after it (or after the booked slot ends, if later).
+ETA_POLL_AFTER = timedelta(minutes=10)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -383,7 +393,20 @@ class OrderStore:
 class RohlikAccount(DataUpdateCoordinator[dict]):
     """RohlikCZ account modelled as a Home Assistant data update coordinator."""
 
-    def __init__(self, hass: HomeAssistant, username: str, password: str, analytics: list[str] | None = None, top_n: int = 10, hide_discontinued: bool = True, entry: ConfigEntry | None = None, site: str | None = None) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        username: str,
+        password: str,
+        analytics: list[str] | None = None,
+        top_n: int = 10,
+        hide_discontinued: bool = True,
+        entry: ConfigEntry | None = None,
+        site: str | None = None,
+        auto_refresh_eta: bool = DEFAULT_AUTO_REFRESH_ETA,
+        eta_refresh_interval: int = DEFAULT_ETA_REFRESH_INTERVAL,
+        last_mile_lead: int = DEFAULT_LAST_MILE_LEAD,
+    ) -> None:
         """Initialize account info."""
         super().__init__(
             hass,
@@ -408,9 +431,20 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         )
         self._order_store: OrderStore | None = None
         self._last_refresh: datetime | None = None
-        # When each delivery announcement (keyed by order ID and text) was first
+        # The soonest order's delivery ETA, shared by the delivery-time
+        # entities and persisted per config entry. It also remembers when each
+        # delivery announcement (keyed by order ID and text) was first
         # received; see announcement_received_at().
-        self._announcement_arrivals: dict[tuple[str, str], datetime] = {}
+        self._eta = DeliveryEtaTracker(
+            hass, f"{DOMAIN}_{entry.entry_id}_eta" if entry is not None else None
+        )
+        self._eta_stale_unsub: CALLBACK_TYPE | None = None
+        self._eta_poll_unsub: CALLBACK_TYPE | None = None
+        self._eta_poll_running = False
+        self._closed = False
+        self._auto_refresh_eta = auto_refresh_eta
+        self._eta_refresh_interval = timedelta(seconds=eta_refresh_interval)
+        self._last_mile_lead = timedelta(minutes=last_mile_lead)
         # _store_lock guards brief in-memory store mutations (contended by the
         # refresh cycle). _enrich_lock serializes whole enrichment runs and may
         # be held across network I/O without blocking the refresh.
@@ -439,6 +473,16 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     def hide_discontinued(self) -> bool:
         """Whether to exclude discontinued products from top N."""
         return self._hide_discontinued
+
+    @property
+    def eta(self) -> DeliveryEtaTracker:
+        """Delivery ETA of the soonest upcoming order."""
+        return self._eta
+
+    @property
+    def last_mile_lead(self) -> timedelta:
+        """How long before the ETA the Last Mile sensor turns on."""
+        return self._last_mile_lead
 
     @property
     def currency(self) -> str:
@@ -490,11 +534,95 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     def _announcement_key(announcement: dict) -> tuple[str, str]:
         return str(announcement.get("id")), announcement.get("content") or ""
 
+    async def async_load_eta(self) -> None:
+        """Load the remembered ETA state (call before the first refresh)."""
+        await self._eta.async_load()
+
     @callback
     def async_update_listeners(self) -> None:
-        """Record newly arrived delivery announcements, then notify entities."""
+        """Record new announcements, resolve the ETA, then notify entities."""
         self._track_announcement_arrivals()
+        self._resolve_eta()
         super().async_update_listeners()
+
+    @callback
+    def _resolve_eta(self) -> None:
+        """Recompute the shared ETA and re-arm the timers that depend on it."""
+        self._eta.resolve(self.data, self.announcement_received_at, self._timezone)
+        if self._closed:
+            return
+        if self._eta_stale_unsub is not None:
+            self._eta_stale_unsub()
+            self._eta_stale_unsub = None
+        if (stale_at := self._eta.stale_at) is not None:
+            # A kept live ETA expires without any new data arriving; notify
+            # the entities so they all drop it at the same moment.
+            self._eta_stale_unsub = async_track_point_in_time(
+                self.hass, self._handle_eta_stale, stale_at + timedelta(seconds=1)
+            )
+        self._schedule_eta_poll()
+
+    @callback
+    def _handle_eta_stale(self, _now: datetime) -> None:
+        self._eta_stale_unsub = None
+        self.async_update_listeners()
+
+    @callback
+    def _eta_poll_window(self) -> tuple[datetime, datetime] | None:
+        """Return when the automatic ETA refresh should run, if at all."""
+        eta = self._eta.eta
+        if eta is None or self._eta.order_id is None:
+            return None
+        end = eta
+        if (slot_till := self._eta.slot_till) is not None and slot_till > end:
+            # Without a courier announcement yet, keep listening for one
+            # until the booked slot is over.
+            end = slot_till
+        return eta - ETA_POLL_BEFORE, end + ETA_POLL_AFTER
+
+    @callback
+    def _schedule_eta_poll(self) -> None:
+        """Arm the next automatic ETA refresh near delivery."""
+        if self._eta_poll_unsub is not None:
+            self._eta_poll_unsub()
+            self._eta_poll_unsub = None
+        if not self._auto_refresh_eta or self._closed or self._eta_poll_running:
+            return
+        if (window := self._eta_poll_window()) is None:
+            return
+        start, end = window
+        now = dt_util.now()
+        if now.timestamp() < start.timestamp():
+            self._eta_poll_unsub = async_track_point_in_time(
+                self.hass, self._handle_eta_poll, start
+            )
+        elif now.timestamp() <= end.timestamp():
+            self._eta_poll_unsub = async_call_later(
+                self.hass, self._eta_refresh_interval, self._handle_eta_poll
+            )
+
+    @callback
+    def _handle_eta_poll(self, _now: datetime) -> None:
+        self._eta_poll_unsub = None
+        if self._closed:
+            return
+        if self.config_entry is not None:
+            self.config_entry.async_create_background_task(
+                self.hass, self._async_eta_poll(), "rohlik_eta_refresh"
+            )
+        else:
+            self.hass.async_create_task(self._async_eta_poll())
+
+    async def _async_eta_poll(self) -> None:
+        """Refresh the delivery announcement, then arm the next refresh."""
+        self._eta_poll_running = True
+        try:
+            await self.refresh_delivery_times()
+        except Exception as err:  # noqa: BLE001 - never let polling break
+            _LOGGER.debug("Automatic delivery time refresh failed: %s", err)
+        finally:
+            self._eta_poll_running = False
+            self._schedule_eta_poll()
 
     @callback
     def _track_announcement_arrivals(self) -> None:
@@ -502,16 +630,18 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
 
         Entries for announcements that are no longer present are dropped, so a
         later announcement that repeats the same text starts a fresh clock.
+        The arrivals are stored with the ETA, so a restart does not restart a
+        relative ("za 2 minuty") countdown.
         """
-        announcements = (
-            ((self.data or {}).get("delivery_announcements") or {}).get("data") or {}
-        ).get("announcements") or []
         now = dt_util.now()
+        previous = self._eta.announcement_arrivals
         arrivals: dict[tuple[str, str], datetime] = {}
-        for announcement in announcements:
+        for announcement in announcements_of(self.data):
             key = self._announcement_key(announcement)
-            arrivals[key] = self._announcement_arrivals.get(key, now)
-        self._announcement_arrivals = arrivals
+            arrivals[key] = previous.get(key, now)
+        if arrivals != previous:
+            self._eta.announcement_arrivals = arrivals
+            self._eta.async_schedule_save()
 
     def announcement_received_at(self, announcement: dict) -> datetime:
         """Return when a delivery announcement's current text was first received.
@@ -522,7 +652,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         time only moves when Rohlík sends a different text.
         """
         key = self._announcement_key(announcement)
-        return self._announcement_arrivals.get(key) or dt_util.now()
+        return self._eta.announcement_arrivals.get(key) or dt_util.now()
 
     async def _async_update_data(self) -> dict:
         """Fetch data from the Rohlik API (called by the coordinator)."""
@@ -827,6 +957,12 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
 
     async def async_close(self) -> None:
         """Release resources held by the API client (called on unload)."""
+        self._closed = True
+        for unsub in (self._eta_stale_unsub, self._eta_poll_unsub):
+            if unsub is not None:
+                unsub()
+        self._eta_stale_unsub = self._eta_poll_unsub = None
+        await self._eta.async_save()
         # Logs out (best-effort) and leaves the injected session alone. The
         # session came from async_create_clientsession during entry setup, so
         # Home Assistant detaches it itself when the entry unloads - closing it

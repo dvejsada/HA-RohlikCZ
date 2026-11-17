@@ -59,16 +59,22 @@
   "options": {
     "step": {
       "init": {
-        "title": "Ausgabenanalyse",
-        "description": "Wähle die Auswertungen aus, die du verfolgen möchtest. Änderungen werden nach dem Neuladen wirksam.",
+        "title": "Optionen",
+        "description": "Einstellungen für Ausgabenanalyse und Lieferzeit. Änderungen werden nach dem Neuladen wirksam.",
         "data": {
           "analytics": "Analyseebenen",
           "top_n": "Anzahl der Top-Artikel in Sensoren",
-          "hide_discontinued": "Nicht mehr angebotene Produkte ausblenden"
+          "hide_discontinued": "Nicht mehr angebotene Produkte ausblenden",
+          "last_mile_lead": "Vorlaufzeit letzte Meile",
+          "auto_refresh_eta": "Lieferzeit automatisch aktualisieren",
+          "eta_refresh_interval": "Aktualisierungsintervall der Lieferzeit"
         },
         "data_description": {
           "top_n": "Wie viele Artikel mit den höchsten Ausgaben in den Sensorattributen angezeigt werden. Standard: 10.",
-          "hide_discontinued": "Nicht mehr angebotene Produkte aus den Top-Kategorien und Top-Artikeln ausschließen."
+          "hide_discontinued": "Nicht mehr angebotene Produkte aus den Top-Kategorien und Top-Artikeln ausschließen.",
+          "last_mile_lead": "Wie viele Minuten vor der erwarteten Lieferzeit sich der Sensor Letzte Meile einschaltet (1–30). Standard: 5.",
+          "auto_refresh_eta": "Die Lieferzeit des Fahrers automatisch aktualisieren, von 30 Minuten vor der erwarteten Lieferung bis 10 Minuten danach.",
+          "eta_refresh_interval": "Wie oft die Lieferzeit während der automatischen Aktualisierung abgerufen wird, in Sekunden (30–300). Standard: 60."
         }
       }
     }
@@ -135,6 +141,17 @@
         "state": {
           "on": "Ja",
           "off": "Nein"
+        }
+      },
+      "last_mile": {
+        "name": "Letzte Meile",
+        "state_attributes": {
+          "eta": {
+            "name": "Erwartete Lieferung"
+          },
+          "lead_minutes": {
+            "name": "Vorlaufzeit"
+          }
         }
       }
     },
@@ -235,6 +252,19 @@
       },
       "items_all_time": {
         "name": "Artikel insgesamt"
+      },
+      "delivery_time_remaining": {
+        "name": "Verbleibende Lieferzeit",
+        "state_attributes": {
+          "source": {
+            "name": "Quelle",
+            "state": {
+              "announcement": "Fahrer-Ankündigung",
+              "slot": "Gebuchtes Zeitfenster",
+              "last_known": "Zuletzt bekannt"
+            }
+          }
+        }
       }
     },
     "todo": {

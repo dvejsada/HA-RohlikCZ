@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, ICON_REUSABLE, ICON_PARENTCLUB, ICON_PREMIUM, ICON_ORDER, ICON_TIMESLOT, ICON_CALENDAR_CHECK, \
-    ICON_CALENDAR_REMOVE
+    ICON_CALENDAR_REMOVE, ICON_LAST_MILE, ICON_LAST_MILE_OFF
 from .entity import BaseEntity
 from .hub import RohlikAccount
 from .utils import get_earliest_order
@@ -29,8 +32,101 @@ async def async_setup_entry(
         IsPremiumSensor(rohlik_account),
         IsOrderedSensor(rohlik_account),
         IsReservedSensor(rohlik_account),
-        IsExpressAvailable(rohlik_account)
+        IsExpressAvailable(rohlik_account),
+        LastMileSensor(rohlik_account),
     ])
+
+#: Last Mile turns off at the latest this long after the ETA.
+LAST_MILE_MAX_OVERDUE = timedelta(minutes=60)
+
+
+class LastMileSensor(BaseEntity, BinarySensorEntity):
+    """On from the configured lead time before the courier's ETA until delivery.
+
+    Only an ETA from a courier announcement counts: the booked slot alone says
+    nothing about where the courier is. It turns off when the order is
+    delivered (no longer upcoming) or, at the latest, an hour after the ETA.
+    """
+
+    _attr_translation_key = "last_mile"
+    _attr_should_poll = False
+
+    def __init__(self, rohlik_account: RohlikAccount) -> None:
+        super().__init__(rohlik_account)
+        self._unsub_timer: CALLBACK_TYPE | None = None
+
+    def _window(self) -> tuple[datetime, datetime] | None:
+        tracker = self._rohlik_account.eta
+        if tracker.eta is None or tracker.order_id is None or not tracker.is_live:
+            return None
+        return (
+            tracker.eta - self._rohlik_account.last_mile_lead,
+            tracker.eta + LAST_MILE_MAX_OVERDUE,
+        )
+
+    @property
+    def is_on(self) -> bool:
+        if (window := self._window()) is None:
+            return False
+        now = dt_util.utcnow().timestamp()
+        return window[0].timestamp() <= now <= window[1].timestamp()
+
+    @property
+    def available(self) -> bool:
+        # One failed refresh must not flip on -> unavailable -> on and re-fire
+        # automations (e.g. opening the door) while a live ETA is known.
+        return super().available or self._rohlik_account.eta.is_live
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        tracker = self._rohlik_account.eta
+        return {
+            "eta": tracker.eta if tracker.is_live else None,
+            "lead_minutes": int(self._rohlik_account.last_mile_lead.total_seconds() // 60),
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_LAST_MILE if self.is_on else ICON_LAST_MILE_OFF
+
+    @callback
+    def _schedule_update(self) -> None:
+        if self._unsub_timer is not None:
+            self._unsub_timer()
+            self._unsub_timer = None
+        if (window := self._window()) is None:
+            return
+        now = dt_util.utcnow().timestamp()
+        start, end = window
+        if now < start.timestamp():
+            when = start
+        elif now <= end.timestamp():
+            when = end + timedelta(seconds=1)
+        else:
+            return
+        self._unsub_timer = async_track_point_in_time(self.hass, self._handle_tick, when)
+
+    @callback
+    def _handle_tick(self, _now: datetime) -> None:
+        self._unsub_timer = None
+        self.async_write_ha_state()
+        self._schedule_update()
+
+    @callback
+    def _cancel_timer(self) -> None:
+        if self._unsub_timer is not None:
+            self._unsub_timer()
+            self._unsub_timer = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self._cancel_timer)
+        self._schedule_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+        self._schedule_update()
 
 class IsExpressAvailable(BaseEntity, BinarySensorEntity):
     _attr_translation_key = "is_express_available"
