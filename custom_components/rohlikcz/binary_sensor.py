@@ -49,17 +49,21 @@ class LastMileSensor(EtaTimedEntity, BinarySensorEntity):
 
     def _window(self) -> tuple[datetime, datetime] | None:
         tracker = self._rohlik_account.eta
-        if tracker.eta is None or tracker.order_id is None or not tracker.is_live:
+        if not tracker.is_live:
             return None
-        # In UTC: wall-clock arithmetic on a local time ignores DST.
-        eta = dt_util.as_utc(tracker.eta)
-        return eta - self._rohlik_account.last_mile_lead, eta + MAX_OVERDUE
+        return tracker.window(self._rohlik_account.last_mile_lead, MAX_OVERDUE)
 
     @property
     def is_on(self) -> bool:
         if (window := self._window()) is None:
             return False
         return window[0] <= dt_util.utcnow() <= window[1]
+
+    @property
+    def available(self) -> bool:
+        # A failed refresh must not flip on -> unavailable -> on and re-fire
+        # automations (e.g. opening the door) while a courier ETA is known.
+        return super().available or self._rohlik_account.eta.is_live
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

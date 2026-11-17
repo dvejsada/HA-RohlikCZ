@@ -6,6 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -16,7 +17,7 @@ from .const import (
     CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL,
     CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD,
 )
-from .eta import async_remove_eta_store, eta_storage_key
+from .eta import ETA_STORE_VERSION, eta_storage_key
 from .hub import RohlikAccount
 from .services import register_services
 
@@ -70,7 +71,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bo
 
     # Restore the remembered delivery ETA before the first refresh resolves it,
     # so the delivery-time entities never start from the booked slot alone.
-    await rohlik_hub.async_load_eta()
+    await rohlik_hub.eta.async_load()
 
     # Performs the first refresh; raises ConfigEntryNotReady on connection
     # failure (retried automatically) or ConfigEntryAuthFailed on bad
@@ -134,4 +135,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> b
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete the entry's stored delivery ETA state when it is removed."""
-    await async_remove_eta_store(hass, eta_storage_key(entry.entry_id))
+    await Store(hass, ETA_STORE_VERSION, eta_storage_key(entry.entry_id)).async_remove()

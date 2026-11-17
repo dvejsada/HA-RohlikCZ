@@ -242,18 +242,8 @@ class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
         if tracker.restored:
             return
 
-        last_value: datetime | None = None
-        if (last_state := await self.async_get_last_state()) is not None:
-            if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
-                try:
-                    last_value = datetime.fromisoformat(
-                        last_state.state.replace('Z', '+00:00')
-                    )
-                except (ValueError, AttributeError):
-                    _LOGGER.debug(
-                        "Failed to restore delivery time from last state %r",
-                        last_state.state,
-                    )
+        last_state = await self.async_get_last_state()
+        last_value = dt_util.parse_datetime(last_state.state) if last_state else None
 
         restored = None
         if (last_extra_data := await self.async_get_last_extra_data()) is not None:
@@ -279,25 +269,22 @@ class DeliveryTimeRemaining(EtaTimedEntity, SensorEntity):
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_suggested_display_precision = 0
 
-    def _eta_utc(self) -> datetime | None:
-        eta = self._rohlik_account.eta.eta
-        # In UTC: wall-clock arithmetic on a local time ignores DST.
-        return dt_util.as_utc(eta) if eta is not None else None
+    def _seconds_left(self) -> float | None:
+        if (eta := self._rohlik_account.eta.eta) is None:
+            return None
+        return (eta - dt_util.utcnow()).total_seconds()
 
     @property
     def native_value(self) -> int | None:
         """Whole minutes left (rounded up); 0 once due; unknown when long overdue."""
-        if (eta := self._eta_utc()) is None:
-            return None
-        seconds = (eta - dt_util.utcnow()).total_seconds()
-        if seconds < -MAX_OVERDUE.total_seconds():
+        seconds = self._seconds_left()
+        if seconds is None or seconds < -MAX_OVERDUE.total_seconds():
             return None
         return max(0, math.ceil(seconds / 60))
 
     @property
     def available(self) -> bool:
-        # The countdown runs locally, so it survives a failed refresh even
-        # when the ETA only comes from the booked slot.
+        # The countdown runs locally, so a failed refresh does not stop it.
         return super().available or self._rohlik_account.eta.eta is not None
 
     @property
@@ -310,9 +297,9 @@ class DeliveryTimeRemaining(EtaTimedEntity, SensorEntity):
 
     def _next_change(self) -> datetime | None:
         """Return when the value next changes, within the ticking window."""
-        if (eta := self._eta_utc()) is None:
+        eta = self._rohlik_account.eta.eta
+        if (seconds := self._seconds_left()) is None:
             return None
-        seconds = (eta - dt_util.utcnow()).total_seconds()
         if seconds > REMAINING_TICK_WINDOW.total_seconds():
             # Far away: no per-minute writes, start ticking at the window.
             return eta - REMAINING_TICK_WINDOW

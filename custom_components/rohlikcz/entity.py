@@ -37,20 +37,14 @@ class EtaTimedEntity(BaseEntity):
     """Entity whose state changes with the clock relative to the delivery ETA.
 
     Subclasses return the next moment their state changes from
-    ``_next_change()``; one point-in-time timer is kept armed for it and
-    re-armed on every coordinator update. It also stays available through a
-    failed refresh while a live ETA is known, so automations triggered by it
-    do not fire again on unavailable -> on.
+    ``_next_change()``; one timer is kept armed for it and re-armed on every
+    coordinator update.
     """
 
     _unsub_timer: CALLBACK_TYPE | None = None
 
     def _next_change(self) -> datetime | None:
         raise NotImplementedError
-
-    @property
-    def available(self) -> bool:
-        return super().available or self._rohlik_account.eta.is_live
 
     @callback
     def _cancel_timer(self) -> None:

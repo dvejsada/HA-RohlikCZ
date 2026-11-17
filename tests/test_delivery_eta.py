@@ -369,18 +369,16 @@ async def test_auto_refresh_polls_only_near_delivery(
     assert poll.call_count == 3
     assert _remaining(hass) == "33"
 
-    # Past the end of the booked slot + 10 min, polling stops.
-    end = SLOT_START + timedelta(hours=2, minutes=10)
-    for minute in range(1, 200):
-        when = ETA - timedelta(minutes=28) + timedelta(minutes=minute)
-        if when > end:
-            break
+    # Polling stops 10 minutes after the (new) ETA.
+    when = ETA - timedelta(minutes=28)
+    while when < later + timedelta(minutes=10):
+        when += timedelta(minutes=1)
         await _move_to(hass, freezer, when)
-    # The poll armed just before the end still runs once.
-    await _move_to(hass, freezer, end + timedelta(minutes=5))
+    # The poll armed at the window's end still runs once, then it stops.
+    await _move_to(hass, freezer, when + timedelta(minutes=1))
     calls = poll.call_count
-    await _move_to(hass, freezer, end + timedelta(minutes=10))
-    await _move_to(hass, freezer, end + timedelta(minutes=20))
+    await _move_to(hass, freezer, when + timedelta(minutes=2))
+    await _move_to(hass, freezer, when + timedelta(minutes=3))
     assert poll.call_count == calls
 
 

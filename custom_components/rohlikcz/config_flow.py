@@ -253,7 +253,11 @@ class RohlikOptionsFlowHandler(config_entries.OptionsFlow):
         current = self.config_entry.options.get(CONF_ANALYTICS, DEFAULT_ANALYTICS)
         current_top_n = self.config_entry.options.get(CONF_TOP_N, DEFAULT_TOP_N)
         current_hide = self.config_entry.options.get(CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED)
-        options = self.config_entry.options
+        current_lead = self.config_entry.options.get(CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD)
+        current_auto = self.config_entry.options.get(CONF_AUTO_REFRESH_ETA, DEFAULT_AUTO_REFRESH_ETA)
+        current_interval = self.config_entry.options.get(
+            CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -275,24 +279,15 @@ class RohlikOptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(CONF_HIDE_DISCONTINUED, default=current_hide): BooleanSelector(),
-                vol.Optional(
-                    CONF_LAST_MILE_LEAD,
-                    default=options.get(CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD),
-                ): NumberSelector(
+                vol.Optional(CONF_LAST_MILE_LEAD, default=current_lead): NumberSelector(
                     NumberSelectorConfig(
                         min=1, max=30, step=1,
                         unit_of_measurement="min",
                         mode=NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(
-                    CONF_AUTO_REFRESH_ETA,
-                    default=options.get(CONF_AUTO_REFRESH_ETA, DEFAULT_AUTO_REFRESH_ETA),
-                ): BooleanSelector(),
-                vol.Optional(
-                    CONF_ETA_REFRESH_INTERVAL,
-                    default=options.get(CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL),
-                ): NumberSelector(
+                vol.Optional(CONF_AUTO_REFRESH_ETA, default=current_auto): BooleanSelector(),
+                vol.Optional(CONF_ETA_REFRESH_INTERVAL, default=current_interval): NumberSelector(
                     NumberSelectorConfig(
                         min=30, max=300, step=5,
                         unit_of_measurement="s",

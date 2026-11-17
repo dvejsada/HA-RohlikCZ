@@ -1,6 +1,8 @@
 """Shared fixtures for the Rohlik.cz integration tests."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 
@@ -13,8 +15,6 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 @pytest.fixture(autouse=True)
 def no_real_announcement_requests():
     """Never let the automatic ETA refresh reach the network in tests."""
-    from unittest.mock import AsyncMock, patch
-
     with patch(
         "rohlik_api.services.delivery.DeliveryService.get_announcements",
         new=AsyncMock(return_value=None),

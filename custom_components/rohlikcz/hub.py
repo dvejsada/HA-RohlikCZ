@@ -23,7 +23,7 @@ from .const import (
     DOMAIN, get_site,
     DEFAULT_AUTO_REFRESH_ETA, DEFAULT_ETA_REFRESH_INTERVAL, DEFAULT_LAST_MILE_LEAD,
 )
-from .eta import DeliveryEtaTracker, announcements_of, eta_storage_key
+from .eta import DeliveryEtaTracker, eta_storage_key
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)
@@ -431,16 +431,14 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         )
         self._order_store: OrderStore | None = None
         self._last_refresh: datetime | None = None
-        # The soonest order's delivery ETA, shared by the delivery-time
-        # entities and persisted per config entry. It also remembers when each
-        # delivery announcement (keyed by order ID and text) was first
-        # received; see announcement_received_at().
+        # The soonest order's delivery ETA, shared by the delivery-time entities.
         self._eta = DeliveryEtaTracker(
-            hass, eta_storage_key(entry.entry_id) if entry is not None else None
+            hass,
+            eta_storage_key(entry.entry_id) if entry is not None else None,
+            self._timezone,
         )
         self._eta_stale_unsub: CALLBACK_TYPE | None = None
         self._eta_poll_unsub: CALLBACK_TYPE | None = None
-        self._eta_poll_running = False
         self._closed = False
         self._auto_refresh_eta = auto_refresh_eta
         self._eta_refresh_interval = timedelta(seconds=eta_refresh_interval)
@@ -530,38 +528,31 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         """Timestamp of the last data fetch from the API."""
         return self._last_refresh
 
-    @staticmethod
-    def _announcement_key(announcement: dict) -> tuple[str, str]:
-        return str(announcement.get("id")), announcement.get("content") or ""
-
-    async def async_load_eta(self) -> None:
-        """Load the remembered ETA state (call before the first refresh)."""
-        await self._eta.async_load()
-
     @callback
     def async_update_listeners(self) -> None:
-        """Record new announcements, resolve the ETA, then notify entities."""
+        """Resolve the ETA, re-arm the timers that depend on it, notify entities."""
+        # After unload, a late update (e.g. an in-flight service call) must
+        # not touch the ETA state or arm timers.
         if not self._closed:
-            # After unload, a late update (e.g. an in-flight service call)
-            # must not touch the ETA state the reloaded entry now owns.
-            self._track_announcement_arrivals()
-            self._resolve_eta()
+            self._eta.update(self.data)
+            self._arm_eta_stale_timer()
+            self._schedule_eta_poll()
         super().async_update_listeners()
 
+    def announcement_received_at(self, announcement: dict) -> datetime:
+        """Return when a delivery announcement's current text was first received."""
+        return self._eta.received_at(announcement)
+
     @callback
-    def _resolve_eta(self) -> None:
-        """Recompute the shared ETA and re-arm the timers that depend on it."""
-        self._eta.resolve(self.data, self.announcement_received_at, self._timezone)
+    def _arm_eta_stale_timer(self) -> None:
+        """Notify entities when the kept courier ETA expires without new data."""
         if self._eta_stale_unsub is not None:
             self._eta_stale_unsub()
             self._eta_stale_unsub = None
         if (stale_at := self._eta.stale_at) is not None:
-            # A kept live ETA expires without any new data arriving; notify
-            # the entities so they all drop it at the same moment.
             self._eta_stale_unsub = async_track_point_in_time(
                 self.hass, self._handle_eta_stale, stale_at + timedelta(seconds=1)
             )
-        self._schedule_eta_poll()
 
     @callback
     def _handle_eta_stale(self, _now: datetime) -> None:
@@ -569,37 +560,22 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self.async_update_listeners()
 
     @callback
-    def _eta_poll_window(self) -> tuple[datetime, datetime] | None:
-        """Return when the automatic ETA refresh should run, if at all.
-
-        The same window the example automation used: from 30 minutes before
-        the current ETA (the booked slot start until a courier announcement
-        arrives) until 10 minutes after it. Computed in UTC, so a DST change
-        does not shift it by an hour.
-        """
-        eta = self._eta.eta
-        if eta is None or self._eta.order_id is None:
-            return None
-        eta = dt_util.as_utc(eta)
-        return eta - ETA_POLL_BEFORE, eta + ETA_POLL_AFTER
-
-    @callback
     def _schedule_eta_poll(self) -> None:
-        """Arm the next automatic ETA refresh near delivery."""
+        """Arm the next automatic ETA refresh, from ETA-30 min to ETA+10 min."""
         if self._eta_poll_unsub is not None:
             self._eta_poll_unsub()
             self._eta_poll_unsub = None
-        if not self._auto_refresh_eta or self._closed or self._eta_poll_running:
+        if not self._auto_refresh_eta or self._closed:
             return
-        if (window := self._eta_poll_window()) is None:
+        if (window := self._eta.window(ETA_POLL_BEFORE, ETA_POLL_AFTER)) is None:
             return
         start, end = window
-        now = dt_util.now()
-        if now.timestamp() < start.timestamp():
+        now = dt_util.utcnow()
+        if now < start:
             self._eta_poll_unsub = async_track_point_in_time(
                 self.hass, self._handle_eta_poll, start
             )
-        elif now.timestamp() <= end.timestamp():
+        elif now <= end:
             self._eta_poll_unsub = async_call_later(
                 self.hass, self._eta_refresh_interval, self._handle_eta_poll
             )
@@ -607,55 +583,18 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     @callback
     def _handle_eta_poll(self, _now: datetime) -> None:
         self._eta_poll_unsub = None
-        if self._closed:
-            return
-        if self.config_entry is not None:
-            self.config_entry.async_create_background_task(
-                self.hass, self._async_eta_poll(), "rohlik_eta_refresh"
-            )
-        else:
-            self.hass.async_create_task(self._async_eta_poll())
+        self.config_entry.async_create_background_task(
+            self.hass, self._async_eta_poll(), "rohlik_eta_refresh"
+        )
 
     async def _async_eta_poll(self) -> None:
         """Refresh the delivery announcement, then arm the next refresh."""
-        self._eta_poll_running = True
         try:
             await self.refresh_delivery_times()
         except Exception as err:  # noqa: BLE001 - never let polling break
             _LOGGER.debug("Automatic delivery time refresh failed: %s", err)
-        finally:
-            self._eta_poll_running = False
-            self._schedule_eta_poll()
-
-    @callback
-    def _track_announcement_arrivals(self) -> None:
-        """Remember when each current delivery announcement was first received.
-
-        Entries for announcements that are no longer present are dropped, so a
-        later announcement that repeats the same text starts a fresh clock.
-        The arrivals are stored with the ETA, so a restart does not restart a
-        relative ("za 2 minuty") countdown.
-        """
-        now = dt_util.now()
-        previous = self._eta.announcement_arrivals
-        arrivals: dict[tuple[str, str], datetime] = {}
-        for announcement in announcements_of(self.data):
-            key = self._announcement_key(announcement)
-            arrivals[key] = previous.get(key, now)
-        if arrivals != previous:
-            self._eta.announcement_arrivals = arrivals
-            self._eta.async_schedule_save()
-
-    def announcement_received_at(self, announcement: dict) -> datetime:
-        """Return when a delivery announcement's current text was first received.
-
-        A relative announcement ("za 2 minuty") counts from the moment it was
-        received. Parsing the same unchanged text against the current time on
-        every refresh would push the ETA later with each poll, so the reference
-        time only moves when Rohlík sends a different text.
-        """
-        key = self._announcement_key(announcement)
-        return self._eta.announcement_arrivals.get(key) or dt_util.now()
+        # Re-arm also when the request failed (it then notifies nobody).
+        self._schedule_eta_poll()
 
     async def _async_update_data(self) -> dict:
         """Fetch data from the Rohlik API (called by the coordinator)."""
@@ -954,7 +893,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         if not self.data:
             return
         result = await self._client.delivery.get_announcements()
-        if result is not None:
+        if result is not None and result != self.data.get("delivery_announcements"):
+            # Unchanged announcements are skipped: notifying would make every
+            # entity of the account recompute its state for nothing.
             self.data["delivery_announcements"] = result
             self.async_update_listeners()
 
