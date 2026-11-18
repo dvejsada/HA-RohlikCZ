@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -9,10 +10,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, ICON_REUSABLE, ICON_PARENTCLUB, ICON_PREMIUM, ICON_ORDER, ICON_TIMESLOT, ICON_CALENDAR_CHECK, \
-    ICON_CALENDAR_REMOVE
-from .entity import BaseEntity
+    ICON_CALENDAR_REMOVE, ICON_LAST_MILE, ICON_LAST_MILE_OFF
+from .entity import BaseEntity, EtaTimedEntity
+from .eta import MAX_OVERDUE
 from .hub import RohlikAccount
 from .utils import get_earliest_order
 
@@ -29,8 +32,62 @@ async def async_setup_entry(
         IsPremiumSensor(rohlik_account),
         IsOrderedSensor(rohlik_account),
         IsReservedSensor(rohlik_account),
-        IsExpressAvailable(rohlik_account)
+        IsExpressAvailable(rohlik_account),
+        LastMileSensor(rohlik_account),
     ])
+
+class LastMileSensor(EtaTimedEntity, BinarySensorEntity):
+    """On from the configured lead time before the courier's ETA until delivery.
+
+    Only an ETA from a courier announcement counts: the booked slot alone says
+    nothing about where the courier is. It turns off when the order is
+    delivered (no longer upcoming) or, at the latest, an hour after the ETA.
+    """
+
+    _attr_translation_key = "last_mile"
+    _attr_should_poll = False
+
+    def _window(self) -> tuple[datetime, datetime] | None:
+        tracker = self._rohlik_account.eta
+        if not tracker.is_live:
+            return None
+        return tracker.window(self._rohlik_account.last_mile_lead, MAX_OVERDUE)
+
+    @property
+    def is_on(self) -> bool:
+        if (window := self._window()) is None:
+            return False
+        return window[0] <= dt_util.utcnow() <= window[1]
+
+    @property
+    def available(self) -> bool:
+        # A failed refresh must not flip on -> unavailable -> on and re-fire
+        # automations (e.g. opening the door) while a courier ETA is known.
+        return super().available or self._rohlik_account.eta.is_live
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        tracker = self._rohlik_account.eta
+        return {
+            "eta": tracker.eta if tracker.is_live else None,
+            "lead_minutes": int(self._rohlik_account.last_mile_lead.total_seconds() // 60),
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_LAST_MILE if self.is_on else ICON_LAST_MILE_OFF
+
+    def _next_change(self) -> datetime | None:
+        if (window := self._window()) is None:
+            return None
+        now = dt_util.utcnow()
+        start, end = window
+        if now < start:
+            return start
+        if now <= end:
+            return end + timedelta(seconds=1)
+        return None
+
 
 class IsExpressAvailable(BaseEntity, BinarySensorEntity):
     _attr_translation_key = "is_express_available"

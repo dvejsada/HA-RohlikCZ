@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 
 from collections.abc import Mapping
@@ -10,7 +11,7 @@ from typing import Any, Literal
 from dataclasses import dataclass
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, STATE_UNAVAILABLE
+from homeassistant.const import EntityCategory, STATE_UNAVAILABLE, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
@@ -18,38 +19,16 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
-    ICON_CATEGORY_SPENDING
-from .entity import BaseEntity
+    ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING
+from .entity import BaseEntity, EtaTimedEntity
 from .hub import OrderStore, RohlikAccount
+from .eta import MAX_OVERDUE, announcement_slot, announcements_of
 from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
 
 _LOGGER = logging.getLogger(__name__)
 
-LIVE_ETA_STALE_AFTER = timedelta(hours=1)
-
-
-def announcement_slot(
-    announcement: dict, upcoming_orders: list | None
-) -> tuple[datetime | None, datetime | None]:
-    """Return the booked slot (since, till) of the order an announcement is about.
-
-    Only the upcoming order with the announcement's ID counts. The parser places
-    the announced clock time on the slot's day, so another order's slot would
-    move the ETA to that order's day. With no match it returns (None, None), and
-    the parser keeps placing the time relative to when the announcement arrived.
-    """
-    announcement_id = str(announcement.get("id", ""))
-    order = next(
-        (o for o in upcoming_orders or [] if str(o.get("id", "")) == announcement_id),
-        None,
-    )
-    if order is None:
-        return None, None
-    delivery_slot = order.get("deliverySlot") or {}
-    return (
-        parse_delivery_datetime_string(delivery_slot.get("since")),
-        parse_delivery_datetime_string(delivery_slot.get("till")),
-    )
+#: Delivery Time Remaining ticks every minute only this close to the ETA.
+REMAINING_TICK_WINDOW = timedelta(minutes=90)
 
 
 async def async_setup_entry(
@@ -77,6 +56,7 @@ async def async_setup_entry(
         NextOrderSince(rohlik_hub),
         DeliveryInfo(rohlik_hub),
         DeliveryTime(rohlik_hub),
+        DeliveryTimeRemaining(rohlik_hub),
         MonthlySpent(rohlik_hub),
     ]
 
@@ -114,7 +94,7 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def native_value(self) -> str | None:
         """Returns text of announcement."""
-        delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
+        delivery_info: list = announcements_of(self._rohlik_account.data)
         if len(delivery_info) > 0:
             clean_text = re.sub(r'<[^>]+>', '', delivery_info[0]["content"])
             self._last_value = clean_text
@@ -129,7 +109,7 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """ Get extra state attributes. """
-        delivery_info: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
+        delivery_info: list = announcements_of(self._rohlik_account.data)
         if len(delivery_info) > 0:
             slot_since, slot_till = announcement_slot(
                 delivery_info[0], self._rohlik_account.data.get("next_order")
@@ -235,189 +215,101 @@ class DeliveryTimeExtraStoredData(ExtraStoredData):
 
 
 class DeliveryTime(BaseEntity, SensorEntity, RestoreEntity):
-    """Sensor for showing delivery time."""
+    """Sensor for showing delivery time.
+
+    The ETA itself is resolved and remembered by the coordinator's
+    DeliveryEtaTracker (see eta.py). This entity still restores its own
+    pre-tracker state once, to migrate it into the tracker.
+    """
 
     _attr_translation_key = "delivery_time"
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
-    def __init__(self, rohlik_account: RohlikAccount) -> None:
-        """Initialize the delivery time sensor."""
-        super().__init__(rohlik_account)
-        self._last_value: datetime | None = None
-        self._last_live_value: datetime | None = None
-        self._last_live_order_id: str | None = None
-        self._last_live_slot_since: datetime | None = None
-
-    def _clear_last_live_value(self, order_id: str | None = None) -> None:
-        """Forget a live ETA, optionally only when it belongs to an order."""
-        if order_id is not None and self._last_live_order_id != order_id:
-            return
-        self._last_live_value = None
-        self._last_live_order_id = None
-        self._last_live_slot_since = None
-
-    def _preserved_live_value(
-        self,
-        earliest_order_id: str | None,
-        slot_since: datetime | None,
-    ) -> datetime | None:
-        """Return a current live ETA when it still belongs to this order."""
-        if (
-            earliest_order_id is None
-            or self._last_live_order_id != earliest_order_id
-            or self._last_live_value is None
-        ):
-            return None
-
-        if slot_since != self._last_live_slot_since:
-            self._clear_last_live_value()
-            return None
-
-        if dt_util.now() > self._last_live_value + LIVE_ETA_STALE_AFTER:
-            self._clear_last_live_value()
-            return None
-
-        return self._last_live_value
-
     @property
     def native_value(self) -> datetime | None:
-        """Returns time of delivery for the soonest upcoming order.
-
-        The precise delivery time comes from the delivery announcement, but with
-        multiple concurrent orders the announcement may relate to a later order
-        rather than the soonest one. In that case we fall back to the delivery
-        slot of the earliest upcoming order. When the announcement is cleared,
-        preserve its last live ETA only while the same order remains the soonest
-        upcoming order.
-        """
-        announcements: list = self._rohlik_account.data["delivery_announcements"]["data"]["announcements"]
-        upcoming_orders: list = self._rohlik_account.data.get("next_order", []) or []
-        earliest_order = get_earliest_order(upcoming_orders)
-        earliest_order_id = (
-            str(earliest_order.get("id"))
-            if earliest_order is not None and earliest_order.get("id") is not None
-            else None
-        )
-        slot_since = (
-            parse_delivery_datetime_string(
-                earliest_order.get("deliverySlot", {}).get("since")
-            )
-            if earliest_order is not None
-            else None
-        )
-
-        if (
-            self._last_live_order_id is not None
-            and self._last_live_order_id != earliest_order_id
-        ):
-            self._clear_last_live_value()
-
-        preserved_live_value = self._preserved_live_value(
-            earliest_order_id, slot_since
-        )
-
-        if len(announcements) > 0:
-            announcement = announcements[0]
-            # Only trust the announcement when there is a single upcoming order
-            # (no ambiguity) or when it explicitly matches the soonest order.
-            announcement_matches_soonest = (
-                len(upcoming_orders) <= 1
-                or earliest_order is None
-                or str(announcement.get("id", "")) == str(earliest_order.get("id", ""))
-            )
-            if announcement_matches_soonest:
-                announced_since, announced_till = announcement_slot(
-                    announcement, upcoming_orders
-                )
-                delivery_time = extract_delivery_datetime(
-                    announcement.get("content", ""),
-                    self._rohlik_account.announcement_received_at(announcement),
-                    tz=self._rohlik_account.timezone,
-                    slot_since=announced_since,
-                    slot_till=announced_till,
-                )
-                if delivery_time is not None:
-                    self._last_value = delivery_time
-                    self._last_live_value = delivery_time
-                    self._last_live_order_id = earliest_order_id
-                    self._last_live_slot_since = slot_since
-                    return delivery_time
-
-                if preserved_live_value is not None:
-                    # The announcement can remain present while no longer
-                    # containing an ETA. Preserve the last precise value for
-                    # this order instead of replacing it with the booked slot.
-                    self._last_value = preserved_live_value
-                    return preserved_live_value
-
-            elif preserved_live_value is not None:
-                # A later concurrent order's announcement does not supersede
-                # the last live ETA of the still-earliest order.
-                self._last_value = preserved_live_value
-                return preserved_live_value
-
-        elif preserved_live_value is not None:
-            # Rohlík commonly clears the announcement shortly before delivery.
-            # Keep its precise ETA while the same order is still the soonest.
-            self._last_value = preserved_live_value
-            return preserved_live_value
-
-        # Fall back to the delivery slot of the soonest order.
-        if slot_since is not None:
-            self._last_value = slot_since
-            return slot_since
-
-        # No live data available - preserve the last known value while an order
-        # still exists so it isn't cleared shortly before delivery.
-        if self._rohlik_account.is_ordered and self._last_value is not None:
-            return self._last_value
-
-        if not self._rohlik_account.is_ordered:
-            self._clear_last_live_value()
-        return None
+        """Returns time of delivery for the soonest upcoming order."""
+        return self._rohlik_account.eta.eta
 
     @property
     def icon(self) -> str:
         return ICON_DELIVERY_TIME
 
-    @property
-    def extra_restore_state_data(self) -> DeliveryTimeExtraStoredData:
-        """Return delivery time data to restore after a restart."""
-        return DeliveryTimeExtraStoredData(
-            self._last_live_value,
-            self._last_live_order_id,
-            self._last_live_slot_since,
-        )
-
     async def async_added_to_hass(self) -> None:
-        """Restore state when added to HA."""
+        """Migrate state stored by older versions into the ETA tracker."""
         await super().async_added_to_hass()
+        tracker = self._rohlik_account.eta
+        if tracker.restored:
+            return
 
-        # Restore last state if available
-        if (last_state := await self.async_get_last_state()) is not None:
-            if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
-                # Try to parse the restored state
-                try:
-                    if isinstance(last_state.state, datetime):
-                        self._last_value = last_state.state
-                    elif isinstance(last_state.state, str):
-                        # Try to parse ISO format
-                        self._last_value = datetime.fromisoformat(last_state.state.replace('Z', '+00:00'))
-                except (ValueError, AttributeError):
-                    _LOGGER.debug(
-                        "Failed to restore delivery time from last state %r",
-                        last_state.state,
-                    )
+        last_state = await self.async_get_last_state()
+        last_value = dt_util.parse_datetime(last_state.state) if last_state else None
 
+        restored = None
         if (last_extra_data := await self.async_get_last_extra_data()) is not None:
             restored = DeliveryTimeExtraStoredData.from_dict(
                 last_extra_data.as_dict()
             )
-            if restored is not None:
-                self._last_live_value = restored.last_live_value
-                self._last_live_order_id = restored.last_live_order_id
-                self._last_live_slot_since = restored.last_live_slot_since
+
+        if tracker.seed_legacy(
+            last_value,
+            restored.last_live_value if restored else None,
+            restored.last_live_order_id if restored else None,
+            restored.last_live_slot_since if restored else None,
+        ):
+            self._rohlik_account.async_update_listeners()
+
+
+class DeliveryTimeRemaining(EtaTimedEntity, SensorEntity):
+    """Minutes until the expected delivery time, counted down locally."""
+
+    _attr_translation_key = "delivery_time_remaining"
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_suggested_display_precision = 0
+
+    def _seconds_left(self) -> float | None:
+        if (eta := self._rohlik_account.eta.eta) is None:
+            return None
+        return (eta - dt_util.utcnow()).total_seconds()
+
+    @property
+    def native_value(self) -> int | None:
+        """Whole minutes left (rounded up); 0 once due; unknown when long overdue."""
+        seconds = self._seconds_left()
+        if seconds is None or seconds < -MAX_OVERDUE.total_seconds():
+            return None
+        return max(0, math.ceil(seconds / 60))
+
+    @property
+    def available(self) -> bool:
+        # The countdown runs locally, so a failed refresh does not stop it.
+        return super().available or self._rohlik_account.eta.eta is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"source": self._rohlik_account.eta.source}
+
+    @property
+    def icon(self) -> str:
+        return ICON_DELIVERY_REMAINING
+
+    def _next_change(self) -> datetime | None:
+        """Return when the value next changes, within the ticking window."""
+        eta = self._rohlik_account.eta.eta
+        if (seconds := self._seconds_left()) is None:
+            return None
+        if seconds > REMAINING_TICK_WINDOW.total_seconds():
+            # Far away: no per-minute writes, start ticking at the window.
+            return eta - REMAINING_TICK_WINDOW
+        if seconds > 0:
+            # The value is ceil(seconds / 60); it drops when the remaining
+            # time reaches the next whole minute before the ETA.
+            return eta - timedelta(minutes=math.ceil(seconds / 60) - 1)
+        if seconds >= -MAX_OVERDUE.total_seconds():
+            return eta + MAX_OVERDUE + timedelta(seconds=1)
+        return None
 
 
 @dataclass(frozen=True, kw_only=True)

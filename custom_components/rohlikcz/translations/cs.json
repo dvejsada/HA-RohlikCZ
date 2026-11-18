@@ -59,16 +59,22 @@
   "options": {
     "step": {
       "init": {
-        "title": "Analýza nákupů",
-        "description": "Vyberte, které úrovně útrat chcete sledovat. Změny se projeví po reloadu.",
+        "title": "Možnosti",
+        "description": "Nastavení analýzy nákupů a času doručení. Změny se projeví po reloadu.",
         "data": {
           "analytics": "Úrovně analýzy",
           "top_n": "Top položek v senzorech",
-          "hide_discontinued": "Skrýt zrušené produkty"
+          "hide_discontinued": "Skrýt zrušené produkty",
+          "last_mile_lead": "Předstih poslední míle",
+          "auto_refresh_eta": "Automaticky aktualizovat čas doručení",
+          "eta_refresh_interval": "Interval aktualizace času doručení"
         },
         "data_description": {
           "top_n": "Kolik top položek zobrazit v atributech senzorů (podle útraty). Výchozí: 10.",
-          "hide_discontinued": "Vyloučit zrušené produkty z top kategorií a položek."
+          "hide_discontinued": "Vyloučit zrušené produkty z top kategorií a položek.",
+          "last_mile_lead": "Kolik minut před očekávaným časem doručení se zapne senzor Poslední míle (1–30). Výchozí: 5.",
+          "auto_refresh_eta": "Automaticky aktualizovat čas doručení od kurýra od 30 minut před očekávaným doručením do 10 minut po něm.",
+          "eta_refresh_interval": "Jak často aktualizovat čas doručení během automatické aktualizace, v sekundách (30–300). Výchozí: 60."
         }
       }
     }
@@ -135,6 +141,17 @@
         "state": {
           "on": "Ano",
           "off": "Ne"
+        }
+      },
+      "last_mile": {
+        "name": "Poslední míle",
+        "state_attributes": {
+          "eta": {
+            "name": "Očekávané doručení"
+          },
+          "lead_minutes": {
+            "name": "Předstih"
+          }
         }
       }
     },
@@ -235,6 +252,19 @@
       },
       "items_all_time": {
         "name": "Položky celkem"
+      },
+      "delivery_time_remaining": {
+        "name": "Zbývající čas do doručení",
+        "state_attributes": {
+          "source": {
+            "name": "Zdroj",
+            "state": {
+              "announcement": "Oznámení kurýra",
+              "slot": "Rezervovaný slot",
+              "last_known": "Poslední známý"
+            }
+          }
+        }
       }
     },
     "todo": {

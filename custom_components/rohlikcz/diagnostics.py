@@ -45,6 +45,7 @@ async def async_get_config_entry_diagnostics(
             "update_interval": str(account.update_interval),
             "analytics": account.analytics,
             "has_address": account.has_address,
+            "delivery_eta": account.eta.as_diagnostics(),
         },
         "data": async_redact_data(account.data or {}, TO_REDACT),
     }

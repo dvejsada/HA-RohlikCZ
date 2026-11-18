@@ -20,6 +20,9 @@ from .const import (
     DOMAIN, CONF_ANALYTICS, ANALYTICS_OPTIONS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
     CONF_SITE, DEFAULT_SITE, SITES, get_site,
+    CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD,
+    CONF_AUTO_REFRESH_ETA, DEFAULT_AUTO_REFRESH_ETA,
+    CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL,
 )
 from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError
 
@@ -232,18 +235,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class RohlikOptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle options for existing entries (reconfigure analytics)."""
+    """Handle options for existing entries (analytics and delivery time)."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
             user_input[CONF_TOP_N] = int(user_input.get(CONF_TOP_N, DEFAULT_TOP_N))
+            user_input[CONF_LAST_MILE_LEAD] = int(
+                user_input.get(CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD)
+            )
+            user_input[CONF_ETA_REFRESH_INTERVAL] = int(
+                user_input.get(CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL)
+            )
             return self.async_create_entry(title="", data=user_input)
 
         current = self.config_entry.options.get(CONF_ANALYTICS, DEFAULT_ANALYTICS)
         current_top_n = self.config_entry.options.get(CONF_TOP_N, DEFAULT_TOP_N)
         current_hide = self.config_entry.options.get(CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED)
+        current_lead = self.config_entry.options.get(CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD)
+        current_auto = self.config_entry.options.get(CONF_AUTO_REFRESH_ETA, DEFAULT_AUTO_REFRESH_ETA)
+        current_interval = self.config_entry.options.get(
+            CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -265,5 +279,20 @@ class RohlikOptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(CONF_HIDE_DISCONTINUED, default=current_hide): BooleanSelector(),
+                vol.Optional(CONF_LAST_MILE_LEAD, default=current_lead): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1, max=30, step=1,
+                        unit_of_measurement="min",
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(CONF_AUTO_REFRESH_ETA, default=current_auto): BooleanSelector(),
+                vol.Optional(CONF_ETA_REFRESH_INTERVAL, default=current_interval): NumberSelector(
+                    NumberSelectorConfig(
+                        min=30, max=300, step=5,
+                        unit_of_measurement="s",
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
             }),
         )

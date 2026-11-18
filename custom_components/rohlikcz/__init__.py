@@ -6,13 +6,18 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN, CONF_ANALYTICS, DEFAULT_ANALYTICS,
     CONF_TOP_N, DEFAULT_TOP_N, CONF_HIDE_DISCONTINUED, DEFAULT_HIDE_DISCONTINUED,
     SERVICE_ADD_TO_CART, CONF_SITE, get_site,
+    CONF_AUTO_REFRESH_ETA, DEFAULT_AUTO_REFRESH_ETA,
+    CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL,
+    CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD,
 )
+from .eta import ETA_STORE_VERSION, eta_storage_key
 from .hub import RohlikAccount
 from .services import register_services
 
@@ -57,7 +62,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> bo
         hide_discontinued=hide_discontinued,
         entry=entry,
         site=site,
+        auto_refresh_eta=entry.options.get(CONF_AUTO_REFRESH_ETA, DEFAULT_AUTO_REFRESH_ETA),
+        eta_refresh_interval=int(
+            entry.options.get(CONF_ETA_REFRESH_INTERVAL, DEFAULT_ETA_REFRESH_INTERVAL)
+        ),
+        last_mile_lead=int(entry.options.get(CONF_LAST_MILE_LEAD, DEFAULT_LAST_MILE_LEAD)),
     )
+
+    # Restore the remembered delivery ETA before the first refresh resolves it,
+    # so the delivery-time entities never start from the booked slot alone.
+    await rohlik_hub.eta.async_load()
 
     # Performs the first refresh; raises ConfigEntryNotReady on connection
     # failure (retried automatically) or ConfigEntryAuthFailed on bad
@@ -117,3 +131,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: RohlikConfigEntry) -> b
     if unload_ok:
         await entry.runtime_data.async_close()
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the entry's stored delivery ETA state when it is removed."""
+    await Store(hass, ETA_STORE_VERSION, eta_storage_key(entry.entry_id)).async_remove()

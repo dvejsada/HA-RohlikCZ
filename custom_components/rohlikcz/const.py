@@ -56,6 +56,9 @@ ICON_YEARLY_SPENT = "mdi:calendar-text"
 ICON_ALLTIME_SPENT = "mdi:chart-line"
 ICON_DELIVERY_CALENDAR = "mdi:calendar-clock"
 ICON_CATEGORY_SPENDING = "mdi:shape"
+ICON_DELIVERY_REMAINING = "mdi:timer-outline"
+ICON_LAST_MILE = "mdi:truck-fast"
+ICON_LAST_MILE_OFF = "mdi:truck-outline"
 
 """ Service attributes """
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
@@ -92,3 +95,11 @@ DEFAULT_ANALYTICS = []  # Nothing enabled by default (opt-in)
 DEFAULT_TOP_N = 10
 CONF_HIDE_DISCONTINUED = "hide_discontinued"
 DEFAULT_HIDE_DISCONTINUED = True
+
+""" Delivery time options """
+CONF_LAST_MILE_LEAD = "last_mile_lead"
+DEFAULT_LAST_MILE_LEAD = 5  # minutes before the ETA
+CONF_AUTO_REFRESH_ETA = "auto_refresh_eta"
+DEFAULT_AUTO_REFRESH_ETA = True
+CONF_ETA_REFRESH_INTERVAL = "eta_refresh_interval"
+DEFAULT_ETA_REFRESH_INTERVAL = 60  # seconds
