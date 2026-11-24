@@ -18,6 +18,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from rohlik_api import (
+    CourierPosition,
     DeliveryTracking,
     InvalidCredentialsError,
     RohlikAPI,
@@ -45,6 +46,9 @@ ETA_POLL_AFTER = timedelta(minutes=10)
 TRACKING_LOOKAHEAD = timedelta(hours=4)
 #: Kept tracking without a successful fetch for this long counts as unknown.
 TRACKING_MAX_AGE = timedelta(minutes=15)
+#: A courier position older than this (by its own timestamp, else by when the
+#: tracking was fetched) is not shown on the map or used for the distance.
+COURIER_POSITION_MAX_AGE = timedelta(minutes=5)
 #: A delivered order's tracking is shown for this long after delivery.
 DELIVERED_HOLD = timedelta(minutes=30)
 #: Tracking of an order that left the upcoming list is dropped after this long.
@@ -96,12 +100,16 @@ class TrackedOrder:
         """What entities care about; seconds-level ETA jitter is ignored."""
         t = self.tracking
         eta = t.estimated_arrival
+        position = t.courier_position
         return (
             self.order_id,
             t.status,
             eta.replace(second=0, microsecond=0) if eta else None,
             t.stops_before,
             t.early_delivery_requested,
+            # The courier map and distance follow every reported move.
+            (position.latitude, position.longitude, position.recorded_at) if position else None,
+            t.progress.courier_location_stale if t.progress else None,
         )
 
 _LOGGER = logging.getLogger(__name__)
@@ -624,6 +632,52 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         if tracked is None or not tracked.is_fresh(now) or tracked.is_expired(now):
             return None
         return tracked.tracking
+
+    @property
+    def courier_position(self) -> CourierPosition | None:
+        """The courier's current position, or None.
+
+        Only while the courier is on the way or at the door, never a position
+        the shop itself flags as stale, and never one older than
+        COURIER_POSITION_MAX_AGE (see courier_position_valid_until).
+        """
+        valid_until = self.courier_position_valid_until
+        if valid_until is None or dt_util.utcnow() > valid_until:
+            return None
+        return self.tracking.courier_position if self.tracking else None
+
+    @property
+    def courier_position_valid_until(self) -> datetime | None:
+        """When the current courier position stops being shown (UTC), or None.
+
+        Measured from the position's own timestamp, or from the fetch when it
+        has none, so a frozen position (failed fetches, rare refreshes) does
+        not linger on the map until the whole tracking expires.
+        """
+        tracking = self.tracking
+        tracked = self._tracked
+        if (
+            tracking is None
+            or tracked is None
+            or tracking.status not in COURIER_COMING
+            or tracking.progress is None
+            or tracking.progress.courier_location_stale
+            or (position := tracking.courier_position) is None
+        ):
+            return None
+        # A timestamp ahead of the fetch (clock skew) counts from the fetch.
+        recorded = position.recorded_at
+        since = min(recorded, tracked.fetched_at) if recorded is not None else tracked.fetched_at
+        return since + COURIER_POSITION_MAX_AGE
+
+    @property
+    def courier_distance(self) -> float | None:
+        """Straight-line metres from the current courier position to the address."""
+        tracking = self.tracking
+        position = self.courier_position
+        if tracking is None or position is None or tracking.destination is None:
+            return None
+        return position.distance_to(tracking.destination)
 
     @property
     def tracking_order_id(self) -> int | None:

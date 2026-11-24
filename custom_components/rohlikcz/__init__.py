@@ -23,7 +23,7 @@ from .services import register_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = ["sensor", "binary_sensor", "todo", "calendar"]
+PLATFORMS: list[str] = ["sensor", "binary_sensor", "todo", "calendar", "device_tracker"]
 
 #: Typed config entry whose runtime_data is the coordinator.
 type RohlikConfigEntry = ConfigEntry[RohlikAccount]

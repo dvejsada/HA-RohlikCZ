@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .hub import RohlikAccount
 
@@ -58,7 +59,9 @@ class EtaTimedEntity(BaseEntity):
     @callback
     def _schedule_update(self) -> None:
         self._cancel_timer()
-        if (when := self._next_change()) is not None:
+        # Never arm a moment that has passed: it would fire at once, write the
+        # same state and re-arm for the same moment, in an endless loop.
+        if (when := self._next_change()) is not None and when > dt_util.utcnow():
             self._unsub_timer = async_track_point_in_time(
                 self.hass, self._handle_tick, when
             )
@@ -81,3 +84,36 @@ class EtaTimedEntity(BaseEntity):
         self._before_write()
         self.async_write_ha_state()
         self._schedule_update()
+
+
+class TrackingEntity(EtaTimedEntity):
+    """Entity showing live delivery tracking; refreshed when it expires.
+
+    Stays available while the hub holds valid tracking, so a failed refresh,
+    a reload or a restart does not pass through "unavailable".
+    """
+
+    @property
+    def available(self) -> bool:
+        return super().available or self._rohlik_account.tracking is not None
+
+    def _next_change(self) -> datetime | None:
+        valid_until = self._rohlik_account.tracking_valid_until
+        return valid_until + timedelta(seconds=1) if valid_until is not None else None
+
+
+class CourierEntity(TrackingEntity):
+    """Tracking entity showing the courier's position; also expires with it."""
+
+    def _next_change(self) -> datetime | None:
+        # An already expired position stays expired: only future moments count.
+        now = dt_util.utcnow()
+        moments = [
+            when + timedelta(seconds=1)
+            for when in (
+                self._rohlik_account.tracking_valid_until,
+                self._rohlik_account.courier_position_valid_until,
+            )
+            if when is not None and when + timedelta(seconds=1) > now
+        ]
+        return min(moments) if moments else None

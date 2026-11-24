@@ -130,10 +130,20 @@ The same **Configure** dialog also holds the delivery-time settings:
 | **Delivery Time** | Predicted exact delivery time for your next order: the courier's tracked estimate when available (never before the slot start while the order is still queued, unless you allowed early delivery), otherwise the courier's announcement or the booked slot |
 | **Delivery Status** | The courier's progress with your next order: `in_queue`, `on_the_way`, `arrived`, `handing_over` or `delivered` (shown for 30 minutes after delivery, or at least 5 minutes before the next order takes over); unknown when the shop provides no tracking |
 | **Stops Before Delivery** | How many stops the courier makes before yours; `0` means you are next |
+| **Courier Distance** | Straight-line distance from the courier to your address, while the courier is on the way or at the door (not the driving distance, which is longer). Unknown otherwise, or when the courier's position is outdated (see the note under **Courier on the Map**) |
 | **Delivery Time Remaining** | Minutes until the **Delivery Time**, counted down locally every minute between refreshes (within 90 minutes of delivery). Shows 0 when the delivery is due and unknown an hour after it; the `source` attribute says whether the time comes from courier tracking, the courier's announcement or only the booked slot |
 | **Monthly Spent** | Total amount spent this month |
 | **Yearly Spent** | Total amount spent this year *(requires Spending Analytics)* |
 | **All Time Spent** | Total spent across all tracked orders *(requires Spending Analytics)*; the `by_year` attribute breaks the total down per year (`total` and `order_count` per year) |
+
+### 🗺️ Courier on the Map (opt-in)
+
+| Entity | Description |
+|--------|-------------|
+| **Courier** | A `device_tracker` at the courier's live position while they are on the way or at your door, so it shows on the **Map** card and can trigger zone automations (e.g. "courier entered Home"). The state is unknown when there is no delivery under way or the position is outdated. The `position_recorded` attribute says when the shop recorded the position |
+
+> [!NOTE]
+> The **Courier** entity is **disabled by default**: it records a third party's location in your Home Assistant history. Enable it under **Settings → Devices & Services → Rohlík.cz → entities**, and consider excluding it from the [recorder](https://www.home-assistant.io/integrations/recorder/) if you don't need its history. The position moves only as often as the integration refreshes, about once a minute while the courier is close with **Auto-refresh delivery time** on, so it moves in steps rather than smoothly as in the shop's app. A position is shown for at most **5 minutes** after the shop recorded it (or after it was fetched), and never when the shop marks it as outdated; after that both entities are unknown until a newer position arrives (the age is measured with your Home Assistant clock, so keep it in sync). Without auto-refresh the regular 10-minute refresh is too slow, so the position is unknown most of the time. Zone states such as `home` come from your Home Assistant zones: `home` means "at your door" only if your delivery address is your Home Assistant home location. Courier position comes from the unofficial tracking endpoint and is **experimental**.
 
 ### 📅 Calendar
 

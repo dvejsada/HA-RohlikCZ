@@ -11,7 +11,7 @@ from typing import Any, Literal
 from dataclasses import dataclass
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, STATE_UNAVAILABLE, UnitOfTime
+from homeassistant.const import EntityCategory, STATE_UNAVAILABLE, UnitOfLength, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
@@ -19,8 +19,8 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
-    ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING, ICON_DELIVERY_STATUS, ICON_STOPS_BEFORE
-from .entity import BaseEntity, EtaTimedEntity
+    ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING, ICON_DELIVERY_STATUS, ICON_STOPS_BEFORE, ICON_COURIER_DISTANCE
+from .entity import BaseEntity, CourierEntity, EtaTimedEntity, TrackingEntity
 from .hub import OrderStore, RohlikAccount
 from .eta import MAX_OVERDUE, announcement_slot, announcements_of
 from .utils import (
@@ -64,6 +64,7 @@ async def async_setup_entry(
         DeliveryTimeRemaining(rohlik_hub),
         DeliveryStatusSensor(rohlik_hub),
         StopsBeforeDeliverySensor(rohlik_hub),
+        CourierDistanceSensor(rohlik_hub),
         MonthlySpent(rohlik_hub),
     ]
 
@@ -331,22 +332,6 @@ DELIVERY_STATUS_OPTIONS = ["in_queue", "on_the_way", "arrived", "handing_over", 
 _UNKNOWN_STATUSES_LOGGED: set[str] = set()
 
 
-class TrackingEntity(EtaTimedEntity):
-    """Entity showing live delivery tracking; refreshed when it expires.
-
-    Stays available while the hub holds valid tracking, so a failed refresh,
-    a reload or a restart does not pass through "unavailable".
-    """
-
-    @property
-    def available(self) -> bool:
-        return super().available or self._rohlik_account.tracking is not None
-
-    def _next_change(self) -> datetime | None:
-        valid_until = self._rohlik_account.tracking_valid_until
-        return valid_until + timedelta(seconds=1) if valid_until is not None else None
-
-
 class DeliveryStatusSensor(TrackingEntity, SensorEntity):
     """The courier's delivery status for the soonest (or just delivered) order."""
 
@@ -396,6 +381,33 @@ class StopsBeforeDeliverySensor(TrackingEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return ICON_STOPS_BEFORE
+
+
+class CourierDistanceSensor(CourierEntity, SensorEntity):
+    """Straight-line distance from the courier to the delivery address.
+
+    Known only while the courier is on the way or at the door and the shop
+    reports a current position (not flagged stale, at most 5 minutes old).
+    It is not the driving distance.
+    """
+
+    _attr_translation_key = "courier_distance"
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_native_unit_of_measurement = UnitOfLength.METERS
+    _attr_suggested_unit_of_measurement = UnitOfLength.KILOMETERS
+    # Two decimals: the last few hundred metres are when the value matters.
+    _attr_suggested_display_precision = 2
+    # No state_class on purpose: no long-term statistics of a courier's moves.
+
+    @property
+    def native_value(self) -> float | None:
+        distance = self._rohlik_account.courier_distance
+        return round(distance) if distance is not None else None
+
+    @property
+    def icon(self) -> str:
+        return ICON_COURIER_DISTANCE
 
 
 @dataclass(frozen=True, kw_only=True)
