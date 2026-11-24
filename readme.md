@@ -105,7 +105,7 @@ The same **Configure** dialog also holds the delivery-time settings:
 | **Parents Club** | Active when you are a member of the Parents Club |
 | **Express Available** | Active when express delivery is currently available in your area |
 | **Delivery Last Mile** | Active from the configured lead time (default 5 minutes) before the courier's expected delivery time, or as soon as the courier arrives, until the order is delivered (at most an hour after the expected time). Only a courier estimate (tracking or announcement) turns it on, never the booked slot alone. Once the courier is on the way it stays on even if the estimate moves a few minutes later — handy as a condition for opening the building entrance when the doorbell rings |
-| **Courier at the Door** | Active from the moment the courier arrives at your address until the order is delivered, from the shop's live delivery tracking. It stays on through a failed refresh or a restart, so it is a safe automation trigger — see [`automations/courier_arrived.yaml`](automations/courier_arrived.yaml) |
+| **Courier at the Door** | Active from the moment the courier arrives at your address until the order is delivered, from the shop's live delivery tracking. It stays on through a failed refresh or a restart, so it is a safe automation trigger — see [`automations/courier_arrived.yaml`](automations/courier_arrived.yaml). Needs **Auto-refresh delivery time** (on by default): the courier is usually at the door for only a few minutes, which the regular 10-minute refresh can miss |
 
 ### 🟢 Sensors
 
@@ -128,7 +128,7 @@ The same **Configure** dialog also holds the delivery-time settings:
 | **Delivery Slot Start** | Start of the delivery window for your next order |
 | **Delivery Slot End** | End of the delivery window for your next order |
 | **Delivery Time** | Predicted exact delivery time for your next order: the courier's tracked estimate when available (never before the slot start while the order is still queued, unless you allowed early delivery), otherwise the courier's announcement or the booked slot |
-| **Delivery Status** | The courier's progress with your next order: `in_queue`, `on_the_way`, `arrived`, `handing_over` or `delivered` (shown for 30 minutes after delivery); unknown when the shop provides no tracking |
+| **Delivery Status** | The courier's progress with your next order: `in_queue`, `on_the_way`, `arrived`, `handing_over` or `delivered` (shown for 30 minutes after delivery, or at least 5 minutes before the next order takes over); unknown when the shop provides no tracking |
 | **Stops Before Delivery** | How many stops the courier makes before yours; `0` means you are next |
 | **Delivery Time Remaining** | Minutes until the **Delivery Time**, counted down locally every minute between refreshes (within 90 minutes of delivery). Shows 0 when the delivery is due and unknown an hour after it; the `source` attribute says whether the time comes from courier tracking, the courier's announcement or only the booked slot |
 | **Monthly Spent** | Total amount spent this month |

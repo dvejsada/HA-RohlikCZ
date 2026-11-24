@@ -284,3 +284,15 @@ until delivery, at most every 60 s in the final stage.
      - matches 9+ digits with common separators, so it also catches DE/AT/HU formats and `00…` prefixes; long order numbers are dropped too
      - is applied to restored pre-1.3.0 attributes
    - **Courier at the Door** has no device class (`PRESENCE` reads "Home/Away").
+7. **Changes after the second code review:**
+   - **Queued latch:** while queued, Last Mile latches only with at most one stop left. A close ETA several stops out that later slips by hours no longer keeps it on.
+   - **Latch deadline:** it follows the current estimate (else the slot end) + 1 h. It no longer depends on "now", so it is never pushed out by restarts.
+   - **Hard timeout:** a timed-out order is not latched again unless the courier arrives afterwards.
+   - **Arrival fallback:** Last Mile's arrived fallback respects the deadline.
+   - **Order IDs:** the hub's order ID is used everywhere (ETA, poll window, Delivery Status attribute), since the response may lack one.
+   - **Delivered display:** a delivered order is shown for at least 5 min (`DELIVERED_MIN_SHOW`) before the next order's tracking replaces it, so `delivered` is always observable.
+   - **Phone stripping:**
+     - dates and times are masked before matching
+     - up to 3-character separators are allowed
+     - `wa.me`/`sms:` links and a space before `tel:` are handled
+     - a fragment after an abbreviation such as "tel." stays with its sentence

@@ -373,7 +373,7 @@ class DeliveryStatusSensor(TrackingEntity, SensorEntity):
         tracking = self._rohlik_account.tracking
         progress = tracking.progress if tracking is not None else None
         return {
-            "order_id": tracking.order_id if tracking is not None else None,
+            "order_id": self._rohlik_account.tracking_order_id,
             "updated": progress.generated_at if progress is not None else None,
         }
 

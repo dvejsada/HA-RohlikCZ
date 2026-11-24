@@ -51,6 +51,9 @@ DELIVERED_HOLD = timedelta(minutes=30)
 LEFT_LIST_EXPIRY = timedelta(minutes=30)
 #: Fetches for an order that left the upcoming list, to catch DELIVERED.
 FINAL_FETCH_ATTEMPTS = 3
+#: A delivered order is shown at least this long before the next order's
+#: tracking replaces it, so "delivered" is always observable.
+DELIVERED_MIN_SHOW = timedelta(minutes=5)
 #: An order that answered 404 is asked again after this long.
 NO_TRACKING_RETRY = timedelta(minutes=30)
 #: Longest automatic refresh interval once the courier is close.
@@ -604,7 +607,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         # After unload, a late update (e.g. an in-flight service call) must
         # not touch the ETA state or arm timers.
         if not self._closed:
-            self._eta.update(self.data, self.tracking)
+            self._eta.update(self.data, self.tracking, self.tracking_order_id)
             self._arm_eta_stale_timer()
             self._schedule_eta_poll()
         super().async_update_listeners()
@@ -714,9 +717,24 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                 elif outcome == "not_found":
                     self._tracked = None
 
-            # 2. The soonest order, once its slot is within the lookahead.
-            if soonest is not None and soonest.id not in self._no_tracking and (
-                soonest.slot_since is None or soonest.slot_since - now <= TRACKING_LOOKAHEAD
+            # 2. The soonest order, once its slot is within the lookahead; a
+            #    just-delivered other order is shown for DELIVERED_MIN_SHOW first.
+            held = self._tracked
+            showing_delivered = (
+                held is not None
+                and held.delivered_at is not None
+                and now - held.delivered_at < DELIVERED_MIN_SHOW
+                and soonest is not None
+                and held.order_id != soonest.id
+            )
+            if (
+                soonest is not None
+                and not showing_delivered
+                and soonest.id not in self._no_tracking
+                and (
+                    soonest.slot_since is None
+                    or soonest.slot_since - now <= TRACKING_LOOKAHEAD
+                )
             ):
                 # Tracking for it replaces any held (delivered or departed) order.
                 outcome, tracking = await self._fetch_tracking(soonest.id)
@@ -786,7 +804,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             tracking is not None
             and tracking.estimated_arrival is not None
             and not tracking.is_delivered
-            and self._eta.order_id == str(tracking.order_id)
+            and self._eta.order_id == str(self.tracking_order_id)
         ):
             estimate = tracking.estimated_arrival
             return estimate - ETA_POLL_BEFORE, estimate + ETA_POLL_AFTER

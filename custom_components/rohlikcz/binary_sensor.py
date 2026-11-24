@@ -51,17 +51,34 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
 
     _latched_order: int | None = None
     _latch_until: datetime | None = None
-    # An order whose latch hit its hard deadline is never latched again, so a
-    # delivery stuck in e.g. ARRIVED cannot keep the sensor on forever.
+    # An order whose latch hit its hard deadline is not latched again, so a
+    # delivery stuck in e.g. ARRIVED cannot keep the sensor on forever. If it
+    # timed out before the courier arrived, an arrival may still latch it.
     _timed_out_order: int | None = None
+    _timed_out_arrived: bool = False
 
     def _should_latch(self, now: datetime) -> bool:
         raise NotImplementedError
 
-    def _latch_deadline(self, now: datetime) -> datetime:
+    def _latch_deadline(self) -> datetime | None:
+        """The current estimate (else the slot end) + MAX_OVERDUE, or None.
+
+        Recomputed on every update, so a later estimate moves it; it never
+        depends on "now", so it cannot be pushed out by restarts.
+        """
         tracking = self._rohlik_account.tracking
-        estimate = tracking.estimated_arrival if tracking is not None else None
-        return max(estimate or now, now) + MAX_OVERDUE
+        if tracking is None:
+            return None
+        base = tracking.estimated_arrival or tracking.slot_till
+        return base + MAX_OVERDUE if base is not None else None
+
+    def _blocked(self, order_id: int | None) -> bool:
+        """Whether a past hard timeout forbids latching this order."""
+        if order_id is None or order_id != self._timed_out_order:
+            return False
+        tracking = self._rohlik_account.tracking
+        arrived_now = tracking is not None and tracking.has_arrived
+        return self._timed_out_arrived or not arrived_now
 
     def _before_write(self) -> None:
         now = dt_util.utcnow()
@@ -69,9 +86,11 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
         # The hub's order ID: the tracking response itself may lack one.
         order_id = self._rohlik_account.tracking_order_id
         if self._latched_order is not None:
+            self._latch_until = self._latch_deadline() or self._latch_until
             timed_out = self._latch_until is None or now > self._latch_until
             if timed_out:
                 self._timed_out_order = self._latched_order
+                self._timed_out_arrived = tracking is not None and tracking.has_arrived
             if (
                 timed_out
                 or tracking is None
@@ -83,11 +102,13 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
             self._latched_order is None
             and tracking is not None
             and order_id is not None
-            and order_id != self._timed_out_order
+            and not self._blocked(order_id)
             and self._should_latch(now)
         ):
-            self._latched_order = order_id
-            self._latch_until = self._latch_deadline(now)
+            deadline = self._latch_deadline()
+            if deadline is not None and now <= deadline:
+                self._latched_order = order_id
+                self._latch_until = deadline
 
     @property
     def _latched(self) -> bool:
@@ -103,8 +124,10 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
             and tracking.is_active
             and last.attributes.get("order_id") == self._rohlik_account.tracking_order_id
         ):
-            self._latched_order = self._rohlik_account.tracking_order_id
-            self._latch_until = self._latch_deadline(dt_util.utcnow())
+            deadline = self._latch_deadline()
+            if deadline is not None and dt_util.utcnow() <= deadline:
+                self._latched_order = self._rohlik_account.tracking_order_id
+                self._latch_until = deadline
         await super().async_added_to_hass()
 
     def _next_change(self) -> datetime | None:
@@ -186,8 +209,11 @@ class LastMileSensor(TrackingLatch, BinarySensorEntity):
             return False
         if tracking.has_arrived:
             return True
-        tracked_eta = (
-            tracking.status in COURIER_COMING or self._rohlik_account.eta.source == "tracking"
+        # While queued, only with at most one stop left: the estimate of a
+        # courier several stops away can still slip by hours.
+        stops = tracking.stops_before
+        tracked_eta = tracking.status in COURIER_COMING or (
+            self._rohlik_account.eta.source == "tracking" and stops is not None and stops <= 1
         )
         return tracked_eta and self._window_on(now)
 
@@ -198,13 +224,16 @@ class LastMileSensor(TrackingLatch, BinarySensorEntity):
             return False
         if self._latched:
             return True
-        if (
-            self._timed_out_order is not None
-            and self._timed_out_order == self._rohlik_account.tracking_order_id
-        ):
+        if self._blocked(self._rohlik_account.tracking_order_id):
             return False  # past the hard deadline for this order
         now = dt_util.utcnow()
-        return self._window_on(now) or (tracking is not None and tracking.has_arrived)
+        deadline = self._latch_deadline()
+        arrived = (
+            tracking is not None
+            and tracking.has_arrived
+            and (deadline is None or now <= deadline)
+        )
+        return self._window_on(now) or arrived
 
     @property
     def available(self) -> bool:

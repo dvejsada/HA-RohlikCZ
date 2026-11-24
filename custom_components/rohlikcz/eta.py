@@ -249,12 +249,18 @@ class DeliveryEtaTracker:
         """
         return self.announcement_arrivals.get(self._announcement_key(announcement)) or dt_util.now()
 
-    def update(self, data: dict | None, tracking: DeliveryTracking | None = None) -> None:
+    def update(
+        self,
+        data: dict | None,
+        tracking: DeliveryTracking | None = None,
+        tracking_order_id: int | None = None,
+    ) -> None:
         """Record new announcements and recompute the ETA from coordinator data.
 
-        ``tracking`` is the hub's current (valid) delivery tracking, if any; it
-        takes priority over announcements when it belongs to the soonest order
-        and has a courier estimate.
+        ``tracking`` is the hub's current (valid) delivery tracking, if any, and
+        ``tracking_order_id`` the order the hub fetched it for (the response
+        itself may lack an ID). It takes priority over announcements when it
+        belongs to the soonest order and has a courier estimate.
 
         Arrivals of announcements no longer present are dropped, so the same
         text arriving again later starts a fresh clock.
@@ -269,7 +275,7 @@ class DeliveryEtaTracker:
             key: self.announcement_arrivals.get(key, now)
             for key in map(self._announcement_key, announcements_of(data))
         }
-        eta, self.source = self._resolve(data, tracking)
+        eta, self.source = self._resolve(data, tracking, tracking_order_id)
         self.eta = dt_util.as_utc(eta) if eta is not None else None
         after = (
             self.last_value, self.last_live_value, self.last_live_order_id,
@@ -315,7 +321,7 @@ class DeliveryEtaTracker:
         return self.last_live_value
 
     def _resolve(
-        self, data: dict, tracking: DeliveryTracking | None
+        self, data: dict, tracking: DeliveryTracking | None, tracking_order_id: int | None
     ) -> tuple[datetime | None, EtaSource | None]:
         now = dt_util.now()
         announcements = announcements_of(data)
@@ -341,7 +347,8 @@ class DeliveryEtaTracker:
         if (
             tracking is not None
             and soonest is not None
-            and tracking.order_id == soonest.id
+            and (tracking_order_id if tracking_order_id is not None else tracking.order_id)
+            == soonest.id
             and tracking.estimated_arrival is not None
             and not tracking.is_delivered
         ):
