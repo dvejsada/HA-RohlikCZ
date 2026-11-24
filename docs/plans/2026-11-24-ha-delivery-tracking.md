@@ -260,3 +260,15 @@ until delivery, at most every 60 s in the final stage.
 | 3 | Courier name attribute | **No** |
 | 4 | Courier map in 1.3.0 | **Deferred**. If added later, as a disabled-by-default entity rather than an option |
 | 5 | Lookahead | 4 h at the 10-min cadence |
+
+---
+
+## Implementation notes (deviations from revision 2)
+
+1. **The poll requests run one after the other, not concurrently.** Running them in parallel delayed re-arming the poll inside a background task. It saved under a second per minute, so it wasn't worth the extra timing risk.
+2. **Last Mile latches only once tracking shows the courier on the way or later** (`ON_THE_WAY`, `ARRIVED`, `HANDING_OVER`).
+   - That is exactly where the flap was observed.
+   - Shops or phases without tracking keep the earlier behaviour: a later announced ETA still turns it off, as `test_last_mile_follows_later_eta` expects.
+3. **The ETA tracker keeps string order IDs internally**, because they are persisted that way. It compares `str(tracking.order_id)`. The hub and the new entities use ints.
+4. **Kept tracking does not expire on its own timer.** Expiry (max age, the delivered hold, leaving the list) is evaluated on every refresh and by entity timers armed at `tracking_valid_until`.
+5. **Pre-existing bug fixed:** `IsOrderedSensor` and `hub.is_ordered` crashed with `len(None)` when the upcoming-orders request failed (`next_order` is `None`).

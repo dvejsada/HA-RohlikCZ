@@ -1,0 +1,20 @@
+alias: Rohlik courier has arrived
+description: >-
+  Notifies you when the Rohlik courier arrives at your address, using the
+  "Courier at the Door" sensor from the shop's live delivery tracking. The
+  not_from filter keeps a restart or a failed refresh from re-firing it.
+  Replace binary_sensor.rohlik_cz_courier_at_the_door and the notify action
+  with your own entity and notification service.
+mode: single
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.rohlik_cz_courier_at_the_door
+    to: "on"
+    not_from:
+      - unavailable
+      - unknown
+actions:
+  - action: notify.notify
+    data:
+      title: Rohlík
+      message: The courier is at the door.
