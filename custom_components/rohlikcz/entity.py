@@ -97,3 +97,18 @@ class TrackingEntity(EtaTimedEntity):
     def _next_change(self) -> datetime | None:
         valid_until = self._rohlik_account.tracking_valid_until
         return valid_until + timedelta(seconds=1) if valid_until is not None else None
+
+
+class CourierEntity(TrackingEntity):
+    """Tracking entity showing the courier's position; also expires with it."""
+
+    def _next_change(self) -> datetime | None:
+        moments = [
+            when + timedelta(seconds=1)
+            for when in (
+                self._rohlik_account.tracking_valid_until,
+                self._rohlik_account.courier_position_valid_until,
+            )
+            if when is not None
+        ]
+        return min(moments) if moments else None

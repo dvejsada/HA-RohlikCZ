@@ -70,7 +70,8 @@ def _tracking(
     early: bool = True,
     slot_since: datetime = SLOT_START,
     position: tuple[float, float] = (50.001, 14.001),
-    stale: bool = False,
+    stale: bool | None = False,
+    recorded_ago: timedelta | None = timedelta(seconds=30),
 ) -> DeliveryTracking:
     """Tracking built from placeholder values, like the library's fixtures."""
     utc = ZoneInfo("UTC")
@@ -86,7 +87,11 @@ def _tracking(
                 {
                     "latitude": position[0],
                     "longitude": position[1],
-                    "recordedAt": "2026-11-17T09:59:30Z",
+                    "recordedAt": (
+                        (dt_util.utcnow() - recorded_ago).isoformat()
+                        if recorded_ago is not None
+                        else None
+                    ),
                 }
                 if status in ("ON_THE_WAY", "ARRIVED", "HANDING_OVER")
                 else None
@@ -900,9 +905,10 @@ async def test_courier_on_the_way_is_on_the_map(hass: HomeAssistant, freezer) ->
     assert state.attributes["longitude"] == 14.001
     assert state.attributes["source_type"] == "gps"
     assert state.attributes["order_id"] == ORDER_ID
-    assert state.attributes["position_recorded"] == datetime(
-        2026, 11, 17, 9, 59, 30, tzinfo=ZoneInfo("UTC")
-    )
+    assert state.attributes["position_recorded"] == dt_util.utcnow() - timedelta(seconds=30)
+    assert state.attributes.get("entity_category") is None
+    registry_entry = er.async_get(hass).async_get(state.entity_id)
+    assert registry_entry.entity_category is None
     # The courier's name ("Courier") is never exposed; the entity's own name is.
     attributes = {k: v for k, v in state.attributes.items() if k != "friendly_name"}
     assert COURIER not in str(attributes)
@@ -984,5 +990,123 @@ async def test_diagnostics_hide_the_courier_tracker_position(hass: HomeAssistant
     freezer.move_to(NOW)
     _enable_courier_tracker(hass)
     entry, _fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
-    text = str(await async_get_config_entry_diagnostics(hass, entry))
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    text = str(diag)
     assert "50.001" not in text and "14.001" not in text
+    assert "50.0," not in text and "14.0," not in text
+    tracking = diag["coordinator"]["delivery_tracking"]
+    for key in ("latitude", "longitude", "recorded_at", "destination", "courier_position"):
+        assert key not in str(tracking), key
+
+
+async def test_old_position_is_hidden_and_expires_on_time(hass: HomeAssistant, freezer) -> None:
+    """A position is shown for at most 5 minutes, even if nothing is fetched."""
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0, recorded_ago=timedelta(minutes=1)))
+    assert _courier(hass).attributes["latitude"] == 50.001
+    # 4 min later the position is 5 min old: the timer flips both to unknown.
+    await _move_to(hass, freezer, NOW + timedelta(minutes=4, seconds=2))
+    assert _courier(hass).state == STATE_UNKNOWN
+    assert _distance(hass).state == STATE_UNKNOWN
+    # The tracking itself is still valid: the status is still shown.
+    assert _status(hass) == "on_the_way"
+
+
+async def test_position_older_than_max_age_is_never_shown(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0, recorded_ago=timedelta(minutes=6)))
+    assert _courier(hass).state == STATE_UNKNOWN
+    assert _distance(hass).state == STATE_UNKNOWN
+
+
+async def test_position_without_timestamp_ages_from_the_fetch(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, fetch = await _setup(
+        hass, _data(), _tracking("ON_THE_WAY", stops=0, recorded_ago=None)
+    )
+    assert _courier(hass).attributes["latitude"] == 50.001
+    assert _courier(hass).attributes["position_recorded"] is None
+    # Fetches fail from now on: the frozen position goes after 5 minutes.
+    fetch.side_effect = APIRequestFailedError("boom")
+    await entry.runtime_data.refresh_delivery_times()
+    await _move_to(hass, freezer, NOW + timedelta(minutes=5, seconds=2))
+    assert _courier(hass).state == STATE_UNKNOWN
+    assert _courier(hass).state != STATE_UNAVAILABLE
+
+
+async def test_future_timestamp_counts_from_the_fetch(hass: HomeAssistant, freezer) -> None:
+    """A shop clock ahead of ours does not keep a position longer."""
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(
+        hass, _data(), _tracking("ON_THE_WAY", stops=0, recorded_ago=-timedelta(minutes=30))
+    )
+    assert _courier(hass).attributes["latitude"] == 50.001
+    await _move_to(hass, freezer, NOW + timedelta(minutes=5, seconds=2))
+    assert _courier(hass).state == STATE_UNKNOWN
+
+
+async def test_missing_stale_flag_counts_as_current(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0, stale=None))
+    assert _courier(hass).attributes["latitude"] == 50.001
+
+
+async def test_position_disappears_when_delivered(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, fetch = await _setup(hass, _data(), _tracking("HANDING_OVER", stops=0))
+    entry.runtime_data._client.delivery.get_announcements = AsyncMock(return_value=None)
+    assert _courier(hass).attributes["latitude"] == 50.001
+    fetch.return_value = _tracking("DELIVERED", stops=None)
+    entry.runtime_data.async_request_refresh = AsyncMock()
+    await entry.runtime_data.refresh_delivery_times()
+    await hass.async_block_till_done()
+    assert _status(hass) == "delivered"
+    assert _courier(hass).state == STATE_UNKNOWN
+    assert "latitude" not in _courier(hass).attributes
+    assert _distance(hass).state == STATE_UNKNOWN
+
+
+async def test_failed_refresh_keeps_the_tracker_available(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, _fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
+    entry.runtime_data._client.get_data = AsyncMock(side_effect=APIRequestFailedError("down"))
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert entry.runtime_data.last_update_success is False
+    assert _courier(hass).attributes["latitude"] == 50.001
+    assert _distance(hass).state != STATE_UNAVAILABLE
+
+
+async def test_stationary_courier_updates_position_recorded(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
+    account = entry.runtime_data
+    account._client.delivery.get_announcements = AsyncMock(return_value=None)
+    first = _courier(hass).attributes["position_recorded"]
+    freezer.move_to(NOW + timedelta(minutes=1))
+    fetch.return_value = _tracking("ON_THE_WAY", stops=0)  # same place, newer timestamp
+    await account.refresh_delivery_times()
+    await hass.async_block_till_done()
+    assert _courier(hass).attributes["position_recorded"] == first + timedelta(minutes=1)
+
+
+async def test_unchanged_unknown_tracker_is_not_rewritten(hass: HomeAssistant, freezer) -> None:
+    """No recorder row per refresh while no delivery is under way."""
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, _fetch = await _setup(hass, _data(), _tracking("IN_QUEUE"))
+    before = _courier(hass)
+    assert before.state == STATE_UNKNOWN
+    freezer.move_to(NOW + timedelta(minutes=1))
+    await _refresh(hass, entry)
+    after = _courier(hass)
+    assert after.last_updated == before.last_updated
+    assert after.last_reported >= before.last_reported

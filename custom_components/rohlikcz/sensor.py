@@ -20,7 +20,7 @@ from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EX
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
     ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING, ICON_DELIVERY_STATUS, ICON_STOPS_BEFORE, ICON_COURIER_DISTANCE
-from .entity import BaseEntity, EtaTimedEntity, TrackingEntity
+from .entity import BaseEntity, CourierEntity, EtaTimedEntity, TrackingEntity
 from .hub import OrderStore, RohlikAccount
 from .eta import MAX_OVERDUE, announcement_slot, announcements_of
 from .utils import (
@@ -383,11 +383,12 @@ class StopsBeforeDeliverySensor(TrackingEntity, SensorEntity):
         return ICON_STOPS_BEFORE
 
 
-class CourierDistanceSensor(TrackingEntity, SensorEntity):
+class CourierDistanceSensor(CourierEntity, SensorEntity):
     """Straight-line distance from the courier to the delivery address.
 
     Known only while the courier is on the way or at the door and the shop
-    reports a current position. It is not the driving distance.
+    reports a current position (not flagged stale, at most 5 minutes old).
+    It is not the driving distance.
     """
 
     _attr_translation_key = "courier_distance"
@@ -395,7 +396,9 @@ class CourierDistanceSensor(TrackingEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.DISTANCE
     _attr_native_unit_of_measurement = UnitOfLength.METERS
     _attr_suggested_unit_of_measurement = UnitOfLength.KILOMETERS
-    _attr_suggested_display_precision = 1
+    # Two decimals: the last few hundred metres are when the value matters.
+    _attr_suggested_display_precision = 2
+    # No state_class on purpose: no long-term statistics of a courier's moves.
 
     @property
     def native_value(self) -> float | None:

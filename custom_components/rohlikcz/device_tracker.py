@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ICON_COURIER
-from .entity import TrackingEntity
+from .entity import CourierEntity
 from .hub import RohlikAccount
 
 
@@ -23,19 +23,29 @@ async def async_setup_entry(
     async_add_entities([CourierTracker(rohlik_hub)])
 
 
-class CourierTracker(TrackingEntity, TrackerEntity):
+class CourierTracker(CourierEntity, TrackerEntity):
     """The courier's last reported position while they are on their way to you.
 
     The position is a third party's location and ends up in the recorder
     history, so the entity is disabled by default. Without a current
-    position (no delivery under way, or the shop flags it as stale) the
-    state is unknown and the entity is not shown on the map.
+    position (no delivery under way, the shop flags it as stale, or it is
+    more than 5 minutes old) the state is unknown and the entity is not
+    shown on the map.
     """
 
     _attr_translation_key = "courier"
     _attr_should_poll = False
     _attr_entity_registry_enabled_default = False
     _attr_source_type = SourceType.GPS
+    # TrackerEntity defaults to the diagnostic category, which would hide the
+    # courier from auto-generated dashboards.
+    _attr_entity_category = None
+
+    @property
+    def force_update(self) -> bool:
+        # TrackerEntity forces every write for non-polling trackers, which
+        # would record an identical "unknown" state on every refresh.
+        return False
 
     @property
     def latitude(self) -> float | None:
