@@ -16,7 +16,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_platform, entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -1109,4 +1109,54 @@ async def test_unchanged_unknown_tracker_is_not_rewritten(hass: HomeAssistant, f
     await _refresh(hass, entry)
     after = _courier(hass)
     assert after.last_updated == before.last_updated
-    assert after.last_reported >= before.last_reported
+
+
+def _courier_entities(hass: HomeAssistant) -> list:
+    """The live courier tracker and distance sensor entity objects."""
+    ids = {_courier(hass).entity_id, _distance(hass).entity_id}
+    return [
+        entity
+        for platform in entity_platform.async_get_platforms(hass, DOMAIN)
+        for entity_id, entity in platform.entities.items()
+        if entity_id in ids
+    ]
+
+
+def _assert_no_past_timer(hass: HomeAssistant) -> None:
+    """Each courier entity's timer is unarmed or set in the future (no busy loop)."""
+    entities = _courier_entities(hass)
+    assert len(entities) == 2
+    now = dt_util.utcnow()
+    for entity in entities:
+        when = entity._next_change()
+        assert when is None or when > now, entity.entity_id
+
+
+async def test_expired_position_does_not_rearm_a_past_timer(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, _fetch = await _setup(
+        hass, _data(), _tracking("ON_THE_WAY", stops=0, recorded_ago=timedelta(minutes=1))
+    )
+    _assert_no_past_timer(hass)
+    await _move_to(hass, freezer, NOW + timedelta(minutes=4, seconds=2))
+    assert _courier(hass).state == STATE_UNKNOWN
+    _assert_no_past_timer(hass)
+    # A coordinator update after expiry re-arms only for the tracking expiry.
+    entry.runtime_data.async_update_listeners()
+    await hass.async_block_till_done()
+    _assert_no_past_timer(hass)
+
+
+async def test_position_already_old_at_setup_does_not_spin(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0, recorded_ago=timedelta(minutes=6)))
+    _assert_no_past_timer(hass)
+    writes = []
+    for entity in _courier_entities(hass):
+        original = entity.async_write_ha_state
+        entity.async_write_ha_state = lambda original=original: (writes.append(1), original())
+    for seconds in (1, 2, 3):
+        await _move_to(hass, freezer, NOW + timedelta(seconds=seconds))
+    assert writes == []

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .hub import RohlikAccount
 
@@ -58,7 +59,9 @@ class EtaTimedEntity(BaseEntity):
     @callback
     def _schedule_update(self) -> None:
         self._cancel_timer()
-        if (when := self._next_change()) is not None:
+        # Never arm a moment that has passed: it would fire at once, write the
+        # same state and re-arm for the same moment, in an endless loop.
+        if (when := self._next_change()) is not None and when > dt_util.utcnow():
             self._unsub_timer = async_track_point_in_time(
                 self.hass, self._handle_tick, when
             )
@@ -103,12 +106,14 @@ class CourierEntity(TrackingEntity):
     """Tracking entity showing the courier's position; also expires with it."""
 
     def _next_change(self) -> datetime | None:
+        # An already expired position stays expired: only future moments count.
+        now = dt_util.utcnow()
         moments = [
             when + timedelta(seconds=1)
             for when in (
                 self._rohlik_account.tracking_valid_until,
                 self._rohlik_account.courier_position_valid_until,
             )
-            if when is not None
+            if when is not None and when + timedelta(seconds=1) > now
         ]
         return min(moments) if moments else None
