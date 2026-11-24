@@ -1160,3 +1160,27 @@ async def test_position_already_old_at_setup_does_not_spin(hass: HomeAssistant, 
     for seconds in (1, 2, 3):
         await _move_to(hass, freezer, NOW + timedelta(seconds=seconds))
     assert writes == []
+
+
+async def test_eta_timed_entity_never_arms_a_past_moment(hass: HomeAssistant, freezer) -> None:
+    """The base-class guard: a past _next_change() arms no timer and writes nothing."""
+    from custom_components.rohlikcz.entity import EtaTimedEntity
+
+    freezer.move_to(NOW)
+    entry, _fetch = await _setup(hass, _data(), _tracking("IN_QUEUE"))
+
+    class PastEntity(EtaTimedEntity):
+        _attr_translation_key = "past_probe"
+
+        def _next_change(self):
+            return dt_util.utcnow() - timedelta(seconds=1)
+
+    entity = PastEntity(entry.runtime_data)
+    entity.hass = hass
+    writes = []
+    entity.async_write_ha_state = lambda: writes.append(1)
+    entity._schedule_update()
+    assert entity._unsub_timer is None
+    for seconds in (1, 2, 3):
+        await _move_to(hass, freezer, NOW + timedelta(seconds=seconds))
+    assert writes == []
