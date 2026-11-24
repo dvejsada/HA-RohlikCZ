@@ -18,6 +18,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from rohlik_api import (
+    CourierPosition,
     DeliveryTracking,
     InvalidCredentialsError,
     RohlikAPI,
@@ -96,12 +97,16 @@ class TrackedOrder:
         """What entities care about; seconds-level ETA jitter is ignored."""
         t = self.tracking
         eta = t.estimated_arrival
+        position = t.courier_position
         return (
             self.order_id,
             t.status,
             eta.replace(second=0, microsecond=0) if eta else None,
             t.stops_before,
             t.early_delivery_requested,
+            # The courier map and distance follow every reported move.
+            (position.latitude, position.longitude) if position else None,
+            t.progress.courier_location_stale if t.progress else None,
         )
 
 _LOGGER = logging.getLogger(__name__)
@@ -624,6 +629,32 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         if tracked is None or not tracked.is_fresh(now) or tracked.is_expired(now):
             return None
         return tracked.tracking
+
+    @property
+    def courier_position(self) -> CourierPosition | None:
+        """The courier's current position, or None.
+
+        Only while the courier is on the way or at the door, and never a
+        position the shop itself flags as stale.
+        """
+        tracking = self.tracking
+        if (
+            tracking is None
+            or tracking.status not in COURIER_COMING
+            or tracking.progress is None
+            or tracking.progress.courier_location_stale
+        ):
+            return None
+        return tracking.courier_position
+
+    @property
+    def courier_distance(self) -> float | None:
+        """Straight-line metres from the current courier position to the address."""
+        tracking = self.tracking
+        position = self.courier_position
+        if tracking is None or position is None or tracking.destination is None:
+            return None
+        return position.distance_to(tracking.destination)
 
     @property
     def tracking_order_id(self) -> int | None:

@@ -304,6 +304,9 @@
       },
       "stops_before": {
         "name": "Stopps vor der Lieferung"
+      },
+      "courier_distance": {
+        "name": "Entfernung des Kuriers"
       }
     },
     "todo": {
@@ -314,6 +317,19 @@
     "calendar": {
       "delivery_calendar": {
         "name": "Lieferkalender"
+      }
+    },
+    "device_tracker": {
+      "courier": {
+        "name": "Kurier",
+        "state_attributes": {
+          "order_id": {
+            "name": "Bestell-ID"
+          },
+          "position_recorded": {
+            "name": "Position erfasst"
+          }
+        }
       }
     }
   }

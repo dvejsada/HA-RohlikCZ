@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_track_point_in_time
@@ -81,3 +81,19 @@ class EtaTimedEntity(BaseEntity):
         self._before_write()
         self.async_write_ha_state()
         self._schedule_update()
+
+
+class TrackingEntity(EtaTimedEntity):
+    """Entity showing live delivery tracking; refreshed when it expires.
+
+    Stays available while the hub holds valid tracking, so a failed refresh,
+    a reload or a restart does not pass through "unavailable".
+    """
+
+    @property
+    def available(self) -> bool:
+        return super().available or self._rohlik_account.tracking is not None
+
+    def _next_change(self) -> datetime | None:
+        valid_until = self._rohlik_account.tracking_valid_until
+        return valid_until + timedelta(seconds=1) if valid_until is not None else None

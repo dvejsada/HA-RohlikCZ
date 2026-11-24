@@ -304,6 +304,9 @@
       },
       "stops_before": {
         "name": "Zastávky před doručením"
+      },
+      "courier_distance": {
+        "name": "Vzdálenost kurýra"
       }
     },
     "todo": {
@@ -314,6 +317,19 @@
     "calendar": {
       "delivery_calendar": {
         "name": "Kalendář objednávek"
+      }
+    },
+    "device_tracker": {
+      "courier": {
+        "name": "Kurýr",
+        "state_attributes": {
+          "order_id": {
+            "name": "ID objednávky"
+          },
+          "position_recorded": {
+            "name": "Poloha zaznamenána"
+          }
+        }
       }
     }
   }

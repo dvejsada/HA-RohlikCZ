@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
+import pytest
 from homeassistant.const import (
     CONF_EMAIL,
     CONF_PASSWORD,
@@ -68,6 +69,8 @@ def _tracking(
     order_id: int = ORDER_ID,
     early: bool = True,
     slot_since: datetime = SLOT_START,
+    position: tuple[float, float] = (50.001, 14.001),
+    stale: bool = False,
 ) -> DeliveryTracking:
     """Tracking built from placeholder values, like the library's fixtures."""
     utc = ZoneInfo("UTC")
@@ -78,9 +81,13 @@ def _tracking(
             "deliveryStatus": status,
             "stopsBefore": stops,
             "estimatedArrival": eta.astimezone(utc).isoformat() if eta else None,
-            "courierLocationStale": False,
+            "courierLocationStale": stale,
             "courierPosition": (
-                {"latitude": 50.001, "longitude": 14.001, "recordedAt": None}
+                {
+                    "latitude": position[0],
+                    "longitude": position[1],
+                    "recordedAt": "2026-11-17T09:59:30Z",
+                }
                 if status in ("ON_THE_WAY", "ARRIVED", "HANDING_OVER")
                 else None
             ),
@@ -855,3 +862,127 @@ async def test_latch_has_an_absolute_cap(hass: HomeAssistant, freezer) -> None:
         await _refresh(hass, entry)
     assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_OFF
     assert not entry.runtime_data._late_stage(dt_util.utcnow())
+
+
+# ---------------------------------------------------- courier map and distance
+
+
+def _enable_courier_tracker(hass: HomeAssistant) -> None:
+    """Pre-register the (disabled-by-default) courier tracker as enabled."""
+    er.async_get(hass).async_get_or_create(
+        "device_tracker", DOMAIN, "123456_courier", suggested_object_id="courier"
+    )
+
+
+def _courier(hass: HomeAssistant):
+    return _state(hass, "device_tracker", "courier")
+
+
+def _distance(hass: HomeAssistant):
+    return _state(hass, "sensor", "courier_distance")
+
+
+async def test_courier_tracker_is_disabled_by_default(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
+    entity_id = er.async_get(hass).async_get_entity_id("device_tracker", DOMAIN, "123456_courier")
+    entry = er.async_get(hass).async_get(entity_id)
+    assert entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    assert hass.states.get(entity_id) is None
+
+
+async def test_courier_on_the_way_is_on_the_map(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
+    state = _courier(hass)
+    assert state.attributes["latitude"] == 50.001
+    assert state.attributes["longitude"] == 14.001
+    assert state.attributes["source_type"] == "gps"
+    assert state.attributes["order_id"] == ORDER_ID
+    assert state.attributes["position_recorded"] == datetime(
+        2026, 11, 17, 9, 59, 30, tzinfo=ZoneInfo("UTC")
+    )
+    # The courier's name ("Courier") is never exposed; the entity's own name is.
+    attributes = {k: v for k, v in state.attributes.items() if k != "friendly_name"}
+    assert COURIER not in str(attributes)
+    assert PHONE not in str(state.attributes)
+    # 0.001° lat ≈ 111 m and 0.001° lon at 50° N ≈ 71.5 m from the destination.
+    distance = _distance(hass)
+    assert distance.attributes["unit_of_measurement"] == "km"
+    assert float(distance.state) == pytest.approx(0.132, abs=0.001)
+
+
+@pytest.mark.parametrize("status", ["IN_QUEUE", "DELIVERED"])
+async def test_no_courier_position_outside_the_last_mile(
+    hass: HomeAssistant, freezer, status
+) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    data = _data()
+    await _setup(hass, data, _tracking(status, stops=None if status == "DELIVERED" else 3))
+    state = _courier(hass)
+    assert state.state == STATE_UNKNOWN
+    assert "latitude" not in state.attributes
+    assert _distance(hass).state == STATE_UNKNOWN
+
+
+async def test_stale_position_is_not_shown(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0, stale=True))
+    assert _courier(hass).state == STATE_UNKNOWN
+    assert _distance(hass).state == STATE_UNKNOWN
+
+    fetch.return_value = _tracking("ON_THE_WAY", stops=0)
+    await entry.runtime_data.refresh_delivery_times()
+    await hass.async_block_till_done()
+    assert _courier(hass).attributes["latitude"] == 50.001
+    assert _distance(hass).state != STATE_UNKNOWN
+
+
+async def test_courier_move_updates_the_map(hass: HomeAssistant, freezer) -> None:
+    """Only the position changes: the tracker and distance still update."""
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
+    account = entry.runtime_data
+    account._client.delivery.get_announcements = AsyncMock(return_value=None)
+    before = float(_distance(hass).state)
+
+    fetch.return_value = _tracking("ON_THE_WAY", stops=0, position=(50.01, 14.0))
+    await account.refresh_delivery_times()
+    await hass.async_block_till_done()
+    assert _courier(hass).attributes["latitude"] == 50.01
+    after = float(_distance(hass).state)
+    assert after == pytest.approx(1.112, abs=0.002)
+    assert after > before
+
+
+async def test_courier_at_home_zone(hass: HomeAssistant, freezer) -> None:
+    """At the door the tracker enters the home zone, for zone automations."""
+    hass.config.latitude, hass.config.longitude = 50.0, 14.0
+    await hass.config.async_update(latitude=50.0, longitude=14.0, radius=100)
+    await hass.async_block_till_done()
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), _tracking("ARRIVED", stops=0, position=(50.0001, 14.0001)))
+    assert _courier(hass).state == "home"
+
+
+async def test_distance_unknown_without_destination(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    tracking = _tracking("ON_THE_WAY", stops=0)
+    tracking.destination = None
+    _enable_courier_tracker(hass)
+    await _setup(hass, _data(), tracking)
+    assert _distance(hass).state == STATE_UNKNOWN
+    assert _courier(hass).attributes["latitude"] == 50.001
+
+
+async def test_diagnostics_hide_the_courier_tracker_position(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    _enable_courier_tracker(hass)
+    entry, _fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", stops=0))
+    text = str(await async_get_config_entry_diagnostics(hass, entry))
+    assert "50.001" not in text and "14.001" not in text

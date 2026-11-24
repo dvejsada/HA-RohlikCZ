@@ -63,6 +63,8 @@ ICON_DELIVERY_STATUS = "mdi:truck-delivery-outline"
 ICON_STOPS_BEFORE = "mdi:map-marker-path"
 ICON_COURIER_AT_DOOR = "mdi:doorbell"
 ICON_COURIER_AWAY = "mdi:doorbell-outline"
+ICON_COURIER = "mdi:moped"
+ICON_COURIER_DISTANCE = "mdi:map-marker-distance"
 
 """ Service attributes """
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
