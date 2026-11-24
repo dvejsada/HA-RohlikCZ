@@ -73,7 +73,7 @@
           "top_n": "Kolik top položek zobrazit v atributech senzorů (podle útraty). Výchozí: 10.",
           "hide_discontinued": "Vyloučit zrušené produkty z top kategorií a položek.",
           "last_mile_lead": "Kolik minut před očekávaným časem doručení se zapne senzor Poslední míle (1–30). Výchozí: 5.",
-          "auto_refresh_eta": "Automaticky aktualizovat čas doručení od kurýra od 30 minut před očekávaným doručením do 10 minut po něm.",
+          "auto_refresh_eta": "Automaticky obnovovat čas doručení od 30 minut před očekávaným doručením do 10 minut po něm a alespoň každou minutu, když je kurýr blízko (jedna zastávka před vámi, na cestě nebo u dveří), až do doručení.",
           "eta_refresh_interval": "Jak často aktualizovat čas doručení během automatické aktualizace, v sekundách (30–300). Výchozí: 60."
         }
       }
@@ -151,6 +151,17 @@
           },
           "lead_minutes": {
             "name": "Předstih"
+          },
+          "order_id": {
+            "name": "ID objednávky"
+          }
+        }
+      },
+      "courier_at_door": {
+        "name": "Kurýr u dveří",
+        "state_attributes": {
+          "order_id": {
+            "name": "ID objednávky"
           }
         }
       }
@@ -261,10 +272,32 @@
             "state": {
               "announcement": "Oznámení kurýra",
               "slot": "Rezervovaný slot",
-              "last_known": "Poslední známý"
+              "last_known": "Poslední známý",
+              "tracking": "Sledování kurýra"
             }
           }
         }
+      },
+      "delivery_status": {
+        "name": "Stav doručení",
+        "state": {
+          "in_queue": "Ve frontě",
+          "on_the_way": "Na cestě",
+          "arrived": "Kurýr dorazil",
+          "handing_over": "Předávání",
+          "delivered": "Doručeno"
+        },
+        "state_attributes": {
+          "order_id": {
+            "name": "ID objednávky"
+          },
+          "updated": {
+            "name": "Aktualizováno"
+          }
+        }
+      },
+      "stops_before": {
+        "name": "Zastávky před doručením"
       }
     },
     "todo": {

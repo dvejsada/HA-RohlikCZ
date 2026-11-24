@@ -19,11 +19,16 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, ICON_UPDATE, ICON_CREDIT, ICON_NO_LIMIT, ICON_FREE_EXPRESS, ICON_DELIVERY, ICON_BAGS, \
     ICON_CART, ICON_ACCOUNT, ICON_EMAIL, ICON_PHONE, ICON_PREMIUM_DAYS, ICON_LAST_ORDER, ICON_NEXT_ORDER_SINCE, \
     ICON_NEXT_ORDER_TILL, ICON_INFO, ICON_DELIVERY_TIME, ICON_MONTHLY_SPENT, ICON_YEARLY_SPENT, ICON_ALLTIME_SPENT, \
-    ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING
+    ICON_CATEGORY_SPENDING, ICON_DELIVERY_REMAINING, ICON_DELIVERY_STATUS, ICON_STOPS_BEFORE
 from .entity import BaseEntity, EtaTimedEntity
 from .hub import OrderStore, RohlikAccount
 from .eta import MAX_OVERDUE, announcement_slot, announcements_of
-from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
+from .utils import (
+    extract_delivery_datetime,
+    get_earliest_order,
+    parse_delivery_datetime_string,
+    strip_html_and_phones,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +62,8 @@ async def async_setup_entry(
         DeliveryInfo(rohlik_hub),
         DeliveryTime(rohlik_hub),
         DeliveryTimeRemaining(rohlik_hub),
+        DeliveryStatusSensor(rohlik_hub),
+        StopsBeforeDeliverySensor(rohlik_hub),
         MonthlySpent(rohlik_hub),
     ]
 
@@ -123,8 +130,8 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
             )
 
             if delivery_info[0].get("additionalContent", None):
-                clean_text = delivery_info[0]["additionalContent"]
-                additional_info = re.sub(r'<[^>]+>', '', clean_text)
+                # Drops the courier's phone number added shortly before arrival.
+                additional_info = strip_html_and_phones(delivery_info[0]["additionalContent"])
             else:
                 additional_info = None
 
@@ -310,6 +317,78 @@ class DeliveryTimeRemaining(EtaTimedEntity, SensorEntity):
         if seconds >= -MAX_OVERDUE.total_seconds():
             return eta + MAX_OVERDUE + timedelta(seconds=1)
         return None
+
+
+#: Delivery Status sensor states, in lifecycle order (lower-cased API statuses).
+DELIVERY_STATUS_OPTIONS = ["in_queue", "on_the_way", "arrived", "handing_over", "delivered"]
+
+
+class TrackingEntity(EtaTimedEntity):
+    """Entity showing live delivery tracking; refreshed when it expires.
+
+    Stays available while the hub holds valid tracking, so a failed refresh,
+    a reload or a restart does not pass through "unavailable".
+    """
+
+    @property
+    def available(self) -> bool:
+        return super().available or self._rohlik_account.tracking is not None
+
+    def _next_change(self) -> datetime | None:
+        valid_until = self._rohlik_account.tracking_valid_until
+        return valid_until + timedelta(seconds=1) if valid_until is not None else None
+
+
+class DeliveryStatusSensor(TrackingEntity, SensorEntity):
+    """The courier's delivery status for the soonest (or just delivered) order."""
+
+    _attr_translation_key = "delivery_status"
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = DELIVERY_STATUS_OPTIONS
+    _unknown_logged: set[str] = set()
+
+    @property
+    def native_value(self) -> str | None:
+        tracking = self._rohlik_account.tracking
+        if tracking is None or tracking.status is None:
+            return None
+        value = tracking.status.lower()
+        if value not in DELIVERY_STATUS_OPTIONS:
+            if value not in self._unknown_logged:
+                self._unknown_logged.add(value)
+                _LOGGER.debug("Unknown delivery status from the shop: %s", tracking.status)
+            return None
+        return value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        tracking = self._rohlik_account.tracking
+        progress = tracking.progress if tracking is not None else None
+        return {
+            "order_id": tracking.order_id if tracking is not None else None,
+            "updated": progress.generated_at if progress is not None else None,
+        }
+
+    @property
+    def icon(self) -> str:
+        return ICON_DELIVERY_STATUS
+
+
+class StopsBeforeDeliverySensor(TrackingEntity, SensorEntity):
+    """How many stops the courier makes before this order (0: you are next)."""
+
+    _attr_translation_key = "stops_before"
+    _attr_should_poll = False
+
+    @property
+    def native_value(self) -> int | None:
+        tracking = self._rohlik_account.tracking
+        return tracking.stops_before if tracking is not None else None
+
+    @property
+    def icon(self) -> str:
+        return ICON_STOPS_BEFORE
 
 
 @dataclass(frozen=True, kw_only=True)

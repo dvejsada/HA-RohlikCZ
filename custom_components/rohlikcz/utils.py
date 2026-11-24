@@ -464,3 +464,25 @@ def parse_orders_for_calendar(next_orders: list[dict], delivered_orders: list[di
     normalized_orders.sort(key=lambda x: x['start'])
     
     return normalized_orders
+
+#: A phone number: "+" and 8+ digits (optionally spaced), or exactly nine
+#: digits standing alone (the national format, e.g. "777 123 456"). Longer
+#: digit runs such as order numbers are not matched.
+_PHONE_RE = re.compile(
+    r"\+\d(?:[\s\u00a0]?\d){7,}"
+    r"|(?<!\d)\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3}(?![\s\u00a0]?\d)"
+)
+
+
+def strip_html_and_phones(text: str) -> str:
+    """Strip HTML tags and drop every sentence that contains a phone number.
+
+    Delivery announcements add the courier's phone number shortly before
+    arrival ("… je na čísle <a href="tel:…">…</a>."). That is a third party's
+    personal data and must not end up in entity attributes (and so in the
+    recorder). Whole sentences are dropped so no dangling "call us on ." is
+    left, whatever the language.
+    """
+    plain = re.sub(r"<[^>]+>", "", text)
+    sentences = re.split(r"(?<=[.!?])\s+", plain.strip())
+    return " ".join(s for s in sentences if s and not _PHONE_RE.search(s))

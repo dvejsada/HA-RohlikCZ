@@ -46,6 +46,9 @@ class EtaTimedEntity(BaseEntity):
     def _next_change(self) -> datetime | None:
         raise NotImplementedError
 
+    def _before_write(self) -> None:
+        """Update latched state before the state is written (no-op by default)."""
+
     @callback
     def _cancel_timer(self) -> None:
         if self._unsub_timer is not None:
@@ -63,15 +66,18 @@ class EtaTimedEntity(BaseEntity):
     @callback
     def _handle_tick(self, _now: datetime) -> None:
         self._unsub_timer = None
+        self._before_write()
         self.async_write_ha_state()
         self._schedule_update()
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self._cancel_timer)
+        self._before_write()
         self._schedule_update()
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        self._before_write()
         self.async_write_ha_state()
         self._schedule_update()

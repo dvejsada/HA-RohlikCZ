@@ -73,7 +73,7 @@
           "top_n": "How many top items to show in sensor attributes (by spending). Default: 10.",
           "hide_discontinued": "Exclude discontinued products from top categories and items.",
           "last_mile_lead": "How many minutes before the expected delivery time the Delivery Last Mile sensor turns on (1–30). Default: 5.",
-          "auto_refresh_eta": "Refresh the courier's delivery time automatically from 30 minutes before the expected delivery until 10 minutes after it.",
+          "auto_refresh_eta": "Refresh the courier's delivery time automatically from 30 minutes before the expected delivery until 10 minutes after it, and at least every minute while the courier is close (one stop away, on the way or at the door) until delivery.",
           "eta_refresh_interval": "How often to refresh the delivery time while the automatic refresh runs, in seconds (30–300). Default: 60."
         }
       }
@@ -151,6 +151,17 @@
           },
           "lead_minutes": {
             "name": "Lead time"
+          },
+          "order_id": {
+            "name": "Order ID"
+          }
+        }
+      },
+      "courier_at_door": {
+        "name": "Courier at the Door",
+        "state_attributes": {
+          "order_id": {
+            "name": "Order ID"
           }
         }
       }
@@ -261,10 +272,32 @@
             "state": {
               "announcement": "Courier announcement",
               "slot": "Booked slot",
-              "last_known": "Last known"
+              "last_known": "Last known",
+              "tracking": "Courier tracking"
             }
           }
         }
+      },
+      "delivery_status": {
+        "name": "Delivery Status",
+        "state": {
+          "in_queue": "Queued",
+          "on_the_way": "On the way",
+          "arrived": "Arrived",
+          "handing_over": "Handing over",
+          "delivered": "Delivered"
+        },
+        "state_attributes": {
+          "order_id": {
+            "name": "Order ID"
+          },
+          "updated": {
+            "name": "Updated"
+          }
+        }
+      },
+      "stops_before": {
+        "name": "Stops Before Delivery"
       }
     },
     "todo": {

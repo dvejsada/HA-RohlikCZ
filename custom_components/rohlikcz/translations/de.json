@@ -73,7 +73,7 @@
           "top_n": "Wie viele Artikel mit den höchsten Ausgaben in den Sensorattributen angezeigt werden. Standard: 10.",
           "hide_discontinued": "Nicht mehr angebotene Produkte aus den Top-Kategorien und Top-Artikeln ausschließen.",
           "last_mile_lead": "Wie viele Minuten vor der erwarteten Lieferzeit sich der Sensor Letzte Meile einschaltet (1–30). Standard: 5.",
-          "auto_refresh_eta": "Die Lieferzeit des Fahrers automatisch aktualisieren, von 30 Minuten vor der erwarteten Lieferung bis 10 Minuten danach.",
+          "auto_refresh_eta": "Die Lieferzeit des Kuriers automatisch von 30 Minuten vor der erwarteten Lieferung bis 10 Minuten danach aktualisieren und mindestens jede Minute, solange der Kurier in der Nähe ist (ein Stopp entfernt, unterwegs oder an der Tür), bis zur Lieferung.",
           "eta_refresh_interval": "Wie oft die Lieferzeit während der automatischen Aktualisierung abgerufen wird, in Sekunden (30–300). Standard: 60."
         }
       }
@@ -151,6 +151,17 @@
           },
           "lead_minutes": {
             "name": "Vorlaufzeit"
+          },
+          "order_id": {
+            "name": "Bestell-ID"
+          }
+        }
+      },
+      "courier_at_door": {
+        "name": "Kurier an der Tür",
+        "state_attributes": {
+          "order_id": {
+            "name": "Bestell-ID"
           }
         }
       }
@@ -261,10 +272,32 @@
             "state": {
               "announcement": "Fahrer-Ankündigung",
               "slot": "Gebuchtes Zeitfenster",
-              "last_known": "Zuletzt bekannt"
+              "last_known": "Zuletzt bekannt",
+              "tracking": "Kurierverfolgung"
             }
           }
         }
+      },
+      "delivery_status": {
+        "name": "Lieferstatus",
+        "state": {
+          "in_queue": "In der Warteschlange",
+          "on_the_way": "Unterwegs",
+          "arrived": "Angekommen",
+          "handing_over": "Übergabe",
+          "delivered": "Geliefert"
+        },
+        "state_attributes": {
+          "order_id": {
+            "name": "Bestell-ID"
+          },
+          "updated": {
+            "name": "Aktualisiert"
+          }
+        }
+      },
+      "stops_before": {
+        "name": "Stopps vor der Lieferung"
       }
     },
     "todo": {
