@@ -296,3 +296,9 @@ until delivery, at most every 60 s in the final stage.
      - up to 3-character separators are allowed
      - `wa.me`/`sms:` links and a space before `tel:` are handled
      - a fragment after an abbreviation such as "tel." stays with its sentence
+8. **Changes after the third code review:**
+   - **Date mask:** it is anchored, so it can no longer hide dash/slash/dot-separated phone numbers such as "06-30-123-4567". Unicode dashes count as separators.
+   - **Latch restore:** a latch is restored only from a persisted `latched` attribute. An "on" Last Mile that was only inside its window (queued, many stops) is not restored as latched.
+   - **Absolute cap:** latches and late-stage polling are additionally capped at slot end + 4 h (`LATCH_HARD_CAP`), so an estimate that keeps slipping cannot extend them forever.
+   - **Rollover:** while a just-delivered order is shown for `DELIVERED_MIN_SHOW`, a one-shot poll is armed for its end, so the next order's tracking is fetched then (with auto-refresh on) rather than at the next 10-minute refresh.
+   - **Accepted, not changed:** if `ARRIVED` comes more than 1 h after a frozen or missing estimate, the latches no longer set (that order's deadline has passed). This was never observed. The alternative would let a timed-out stuck delivery re-latch after a restart.

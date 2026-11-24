@@ -18,7 +18,7 @@ from .const import DOMAIN, ICON_REUSABLE, ICON_PARENTCLUB, ICON_PREMIUM, ICON_OR
     ICON_CALENDAR_REMOVE, ICON_LAST_MILE, ICON_LAST_MILE_OFF, ICON_COURIER_AT_DOOR, ICON_COURIER_AWAY
 from .entity import BaseEntity, EtaTimedEntity
 from .eta import MAX_OVERDUE
-from .hub import COURIER_COMING, RohlikAccount
+from .hub import COURIER_COMING, LATCH_HARD_CAP, RohlikAccount
 from .utils import get_earliest_order
 
 async def async_setup_entry(
@@ -70,7 +70,13 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
         if tracking is None:
             return None
         base = tracking.estimated_arrival or tracking.slot_till
-        return base + MAX_OVERDUE if base is not None else None
+        if base is None:
+            return None
+        deadline = base + MAX_OVERDUE
+        # Absolute cap, so an estimate that keeps slipping cannot extend it forever.
+        if tracking.slot_till is not None:
+            deadline = min(deadline, tracking.slot_till + LATCH_HARD_CAP)
+        return deadline
 
     def _blocked(self, order_id: int | None) -> bool:
         """Whether a past hard timeout forbids latching this order."""
@@ -123,6 +129,8 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
             and tracking is not None
             and tracking.is_active
             and last.attributes.get("order_id") == self._rohlik_account.tracking_order_id
+            # "on" alone can also mean "inside the window, not latched".
+            and last.attributes.get("latched") is True
         ):
             deadline = self._latch_deadline()
             if deadline is not None and dt_util.utcnow() <= deadline:
@@ -164,7 +172,7 @@ class CourierAtDoorSensor(TrackingLatch, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"order_id": self._latched_order}
+        return {"order_id": self._latched_order, "latched": self._latched}
 
     @property
     def icon(self) -> str:
@@ -249,6 +257,7 @@ class LastMileSensor(TrackingLatch, BinarySensorEntity):
             "eta": tracker.eta if tracker.is_live else None,
             "lead_minutes": int(self._rohlik_account.last_mile_lead.total_seconds() // 60),
             "order_id": self._latched_order or self._rohlik_account.tracking_order_id,
+            "latched": self._latched,
         }
 
     @property

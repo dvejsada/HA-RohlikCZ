@@ -470,11 +470,19 @@ def parse_orders_for_calendar(next_orders: list[dict], delivered_orders: list[di
 #: brackets. This covers the national formats of all the shops' countries
 #: ("777 123 456", "0151 1234567", "06 30 123 4567") and international ones.
 #: Longer digit runs (such as order numbers) are dropped as well: privacy wins.
-_PHONE_RE = re.compile(r"(?:\+|\b00)?\d(?:[\s\u00a0\-/.()]{0,3}\d){8,}")
+_PHONE_RE = re.compile(r"(?:\+|\b00)?\d(?:[\s\u00a0\-\u2010-\u2015/.()]{0,3}\d){8,}")
 #: Dates and times are blanked before matching, so "24.11.2026 13:00" is
 #: not mistaken for a phone number.
 _DATE_TIME_RE = re.compile(
-    r"\b\d{1,4}[./-]\s?\d{1,2}[./-]\s?\d{2,4}\b\.?|\b\d{1,2}:\d{2}(?::\d{2})?\b"
+    # Dates (DD.MM.[YYYY], YYYY-MM-DD / YYYY.MM.DD, DD/MM/YYYY), anchored so
+    # they cannot be the leading groups of a longer dash/dot/slash-separated
+    # phone number such as "06-30-123-4567" ...
+    r"(?<![\d./-])"
+    r"(?:\d{1,2}\.\s?\d{1,2}\.(?:\s?\d{4})?|\d{4}[-./]\s?\d{1,2}[-./]\s?\d{1,2}\.?"
+    r"|\d{1,2}/\d{1,2}/\d{4})"
+    r"(?![./-]?\d)"
+    # ... and clock times.
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"
 )
 #: A tel: or WhatsApp link, whatever its visible text.
 _TEL_LINK_RE = re.compile(

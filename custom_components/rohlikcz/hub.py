@@ -58,6 +58,8 @@ DELIVERED_MIN_SHOW = timedelta(minutes=5)
 NO_TRACKING_RETRY = timedelta(minutes=30)
 #: Longest automatic refresh interval once the courier is close.
 LATE_STAGE_INTERVAL = timedelta(seconds=60)
+#: Latches and late-stage polling end at the latest this long after the slot end.
+LATCH_HARD_CAP = timedelta(hours=4)
 #: Statuses in which the courier is on the way or at the door.
 COURIER_COMING = (TrackingStatus.ON_THE_WAY, TrackingStatus.ARRIVED, TrackingStatus.HANDING_OVER)
 
@@ -789,9 +791,15 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         stops = tracking.stops_before
         if tracking.status not in COURIER_COMING and (stops is None or stops > 1):
             return False
-        # Bounded by the estimate, else the slot end, plus MAX_OVERDUE.
+        # Bounded by the estimate, else the slot end, plus MAX_OVERDUE, and
+        # absolutely by the slot end + LATCH_HARD_CAP.
         limit = tracking.estimated_arrival or tracking.slot_till
-        return limit is not None and now <= limit + MAX_OVERDUE
+        if limit is None:
+            return False
+        end = limit + MAX_OVERDUE
+        if tracking.slot_till is not None:
+            end = min(end, tracking.slot_till + LATCH_HARD_CAP)
+        return now <= end
 
     def _poll_window(self) -> tuple[datetime, datetime] | None:
         """ETA-30 min .. ETA+10 min around the courier's uncapped estimate.
@@ -823,6 +831,23 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         if not self._auto_refresh_eta or self._closed:
             return
         now = dt_util.utcnow()
+        # A just-delivered order is shown for DELIVERED_MIN_SHOW; fetch the
+        # next order's tracking right when that ends, not at the next refresh.
+        held = self._tracked
+        soonest, _raw = soonest_upcoming(self.data)
+        if (
+            held is not None
+            and held.delivered_at is not None
+            and soonest is not None
+            and soonest.id != held.order_id
+            and now < held.delivered_at + DELIVERED_MIN_SHOW
+        ):
+            self._eta_poll_unsub = async_track_point_in_time(
+                self.hass,
+                self._handle_eta_poll,
+                held.delivered_at + DELIVERED_MIN_SHOW + timedelta(seconds=1),
+            )
+            return
         if self._late_stage(now):
             self._eta_poll_unsub = async_call_later(
                 self.hass,

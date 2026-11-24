@@ -154,6 +154,9 @@
           },
           "order_id": {
             "name": "Bestell-ID"
+          },
+          "latched": {
+            "name": "Gehalten"
           }
         }
       },
@@ -162,6 +165,9 @@
         "state_attributes": {
           "order_id": {
             "name": "Bestell-ID"
+          },
+          "latched": {
+            "name": "Gehalten"
           }
         }
       }

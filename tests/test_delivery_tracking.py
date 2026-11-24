@@ -775,3 +775,83 @@ def test_dates_links_and_abbreviations_in_phone_stripping() -> None:
         "Volejte na tel. 700 000 001. Díky!",
     ):
         assert strip_html_and_phones(dropped) == "Díky!", dropped
+
+
+# -------------------------------------------------- third review follow-ups
+
+
+def test_dash_slash_dot_phone_numbers_are_not_mistaken_for_dates() -> None:
+    for number in (
+        "06-30-123-4567",
+        "06/30/123-4567",
+        "030/12/34 56 78",
+        "0721-12-34-56",
+        "777-12-34-56",
+        "01.51.12.34.56",
+        "777–000–001",
+        "777‑000‑001",
+    ):
+        assert strip_html_and_phones(f"Volejte {number}. Díky!") == "Díky!", number
+    for kept in ("Szállítás 2026.11.24. 13:00.", "Lieferung am 24.11. um 13:00."):
+        assert strip_html_and_phones(kept) == kept
+
+
+async def test_restart_does_not_latch_an_unlatched_last_mile(hass: HomeAssistant, freezer) -> None:
+    """On only because of the window (queued, many stops): not restored as latched."""
+    from custom_components.rohlikcz.const import CONF_LAST_MILE_LEAD
+
+    freezer.move_to(NOW)
+    data = _data([_order(since=NOW)])
+    queued = _tracking("IN_QUEUE", eta=NOW + timedelta(minutes=20), stops=6, slot_since=NOW)
+    entry, _fetch = await _setup(hass, data, queued, {CONF_LAST_MILE_LEAD: 30})
+    state = _state(hass, "binary_sensor", "last_mile")
+    assert state.state == STATE_ON and state.attributes["latched"] is False
+
+    slipped = _tracking("IN_QUEUE", eta=NOW + timedelta(hours=3), stops=6, slot_since=NOW)
+    with patch(
+        "custom_components.rohlikcz.hub.RohlikAPI.get_data",
+        new=AsyncMock(return_value=data),
+    ), patch(
+        "rohlik_api.services.orders.OrderService.get_delivery_tracking",
+        new=AsyncMock(return_value=slipped),
+    ):
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert _state(hass, "binary_sensor", "last_mile").state == STATE_OFF
+
+
+async def test_next_order_is_fetched_when_the_delivered_display_ends(
+    hass: HomeAssistant, freezer
+) -> None:
+    freezer.move_to(NOW)
+    entry, fetch = await _setup(
+        hass,
+        _data(),
+        _tracking("HANDING_OVER", stops=0),
+        {CONF_AUTO_REFRESH_ETA: True, CONF_ETA_REFRESH_INTERVAL: 60},
+    )
+    fetch.return_value = _tracking("DELIVERED", stops=None)
+    nxt = _data(orders=[_order(7002, NOW + timedelta(hours=3))])
+    await _refresh(hass, entry, nxt)
+    assert _status(hass) == "delivered"
+
+    fetch.return_value = _tracking("ON_THE_WAY", order_id=7002, stops=0)
+    await _move_to(hass, freezer, NOW + timedelta(minutes=5, seconds=2))
+    assert _status(hass) == "on_the_way"
+    assert _state(hass, "sensor", "delivery_status").attributes["order_id"] == 7002
+
+
+async def test_latch_has_an_absolute_cap(hass: HomeAssistant, freezer) -> None:
+    """ARRIVED with an estimate that keeps slipping still ends at slot end + 4 h."""
+    freezer.move_to(NOW)
+    entry, fetch = await _setup(hass, _data(), _tracking("ARRIVED", eta=NOW, stops=0))
+    assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_ON
+    slot_till = SLOT_START + timedelta(minutes=15)
+    when = NOW
+    while when < slot_till + timedelta(hours=4, minutes=10):
+        when += timedelta(minutes=10)
+        fetch.return_value = _tracking("ARRIVED", eta=when + timedelta(minutes=30), stops=0)
+        await _move_to(hass, freezer, when)
+        await _refresh(hass, entry)
+    assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_OFF
+    assert not entry.runtime_data._late_stage(dt_util.utcnow())
