@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, STATE_UNKNOWN
 from homeassistant.const import STATE_ON
@@ -51,6 +51,9 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
 
     _latched_order: int | None = None
     _latch_until: datetime | None = None
+    # An order whose latch hit its hard deadline is never latched again, so a
+    # delivery stuck in e.g. ARRIVED cannot keep the sensor on forever.
+    _timed_out_order: int | None = None
 
     def _should_latch(self, now: datetime) -> bool:
         raise NotImplementedError
@@ -63,16 +66,27 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
     def _before_write(self) -> None:
         now = dt_util.utcnow()
         tracking = self._rohlik_account.tracking
-        if self._latched_order is not None and (
-            tracking is None
-            or tracking.order_id != self._latched_order
-            or tracking.is_delivered
-            or self._latch_until is None
-            or now > self._latch_until
+        # The hub's order ID: the tracking response itself may lack one.
+        order_id = self._rohlik_account.tracking_order_id
+        if self._latched_order is not None:
+            timed_out = self._latch_until is None or now > self._latch_until
+            if timed_out:
+                self._timed_out_order = self._latched_order
+            if (
+                timed_out
+                or tracking is None
+                or order_id != self._latched_order
+                or tracking.is_delivered
+            ):
+                self._latched_order = self._latch_until = None
+        if (
+            self._latched_order is None
+            and tracking is not None
+            and order_id is not None
+            and order_id != self._timed_out_order
+            and self._should_latch(now)
         ):
-            self._latched_order = self._latch_until = None
-        if self._latched_order is None and tracking is not None and self._should_latch(now):
-            self._latched_order = tracking.order_id
+            self._latched_order = order_id
             self._latch_until = self._latch_deadline(now)
 
     @property
@@ -86,10 +100,10 @@ class TrackingLatch(EtaTimedEntity, RestoreEntity):
             last is not None
             and last.state == STATE_ON
             and tracking is not None
-            and tracking.status in COURIER_COMING
-            and last.attributes.get("order_id") == tracking.order_id
+            and tracking.is_active
+            and last.attributes.get("order_id") == self._rohlik_account.tracking_order_id
         ):
-            self._latched_order = tracking.order_id
+            self._latched_order = self._rohlik_account.tracking_order_id
             self._latch_until = self._latch_deadline(dt_util.utcnow())
         await super().async_added_to_hass()
 
@@ -112,7 +126,6 @@ class CourierAtDoorSensor(TrackingLatch, BinarySensorEntity):
 
     _attr_translation_key = "courier_at_door"
     _attr_should_poll = False
-    _attr_device_class = BinarySensorDeviceClass.PRESENCE
 
     def _should_latch(self, now: datetime) -> bool:
         tracking = self._rohlik_account.tracking
@@ -162,10 +175,21 @@ class LastMileSensor(TrackingLatch, BinarySensorEntity):
         return window[0] <= now <= window[1]
 
     def _should_latch(self, now: datetime) -> bool:
+        """Latch once on while the courier's tracked estimate drives the ETA.
+
+        Covers the queued phase too: with one stop left the estimate also
+        moves by minutes (a 3-minute jump was observed), which would otherwise
+        turn the sensor off and on again for leads of about 10 minutes.
+        """
         tracking = self._rohlik_account.tracking
-        if tracking is None or tracking.status not in COURIER_COMING:
+        if tracking is None or not tracking.is_active:
             return False
-        return tracking.has_arrived or self._window_on(now)
+        if tracking.has_arrived:
+            return True
+        tracked_eta = (
+            tracking.status in COURIER_COMING or self._rohlik_account.eta.source == "tracking"
+        )
+        return tracked_eta and self._window_on(now)
 
     @property
     def is_on(self) -> bool:
@@ -174,6 +198,11 @@ class LastMileSensor(TrackingLatch, BinarySensorEntity):
             return False
         if self._latched:
             return True
+        if (
+            self._timed_out_order is not None
+            and self._timed_out_order == self._rohlik_account.tracking_order_id
+        ):
+            return False  # past the hard deadline for this order
         now = dt_util.utcnow()
         return self._window_on(now) or (tracking is not None and tracking.has_arrived)
 
@@ -190,7 +219,7 @@ class LastMileSensor(TrackingLatch, BinarySensorEntity):
         return {
             "eta": tracker.eta if tracker.is_live else None,
             "lead_minutes": int(self._rohlik_account.last_mile_lead.total_seconds() // 60),
-            "order_id": self._latched_order or (tracking.order_id if tracking else None),
+            "order_id": self._latched_order or self._rohlik_account.tracking_order_id,
         }
 
     @property

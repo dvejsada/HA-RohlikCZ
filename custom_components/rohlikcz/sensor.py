@@ -164,7 +164,13 @@ class DeliveryInfo(BaseEntity, SensorEntity, RestoreEntity):
             if last_state.state not in (STATE_UNAVAILABLE, "unknown", "None"):
                 self._last_value = last_state.state
             if last_state.attributes:
-                self._last_attributes = dict(last_state.attributes)
+                attrs = dict(last_state.attributes)
+                # Versions before 1.3.0 stored the courier's phone number here.
+                if isinstance(attrs.get("Additional Content"), str):
+                    attrs["Additional Content"] = strip_html_and_phones(
+                        attrs["Additional Content"]
+                    ) or None
+                self._last_attributes = attrs
 
 
 @dataclass
@@ -321,6 +327,8 @@ class DeliveryTimeRemaining(EtaTimedEntity, SensorEntity):
 
 #: Delivery Status sensor states, in lifecycle order (lower-cased API statuses).
 DELIVERY_STATUS_OPTIONS = ["in_queue", "on_the_way", "arrived", "handing_over", "delivered"]
+#: Unknown API statuses already logged (once per value per process).
+_UNKNOWN_STATUSES_LOGGED: set[str] = set()
 
 
 class TrackingEntity(EtaTimedEntity):
@@ -346,7 +354,6 @@ class DeliveryStatusSensor(TrackingEntity, SensorEntity):
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = DELIVERY_STATUS_OPTIONS
-    _unknown_logged: set[str] = set()
 
     @property
     def native_value(self) -> str | None:
@@ -355,8 +362,8 @@ class DeliveryStatusSensor(TrackingEntity, SensorEntity):
             return None
         value = tracking.status.lower()
         if value not in DELIVERY_STATUS_OPTIONS:
-            if value not in self._unknown_logged:
-                self._unknown_logged.add(value)
+            if value not in _UNKNOWN_STATUSES_LOGGED:
+                _UNKNOWN_STATUSES_LOGGED.add(value)
                 _LOGGER.debug("Unknown delivery status from the shop: %s", tracking.status)
             return None
         return value

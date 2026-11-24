@@ -51,6 +51,8 @@ DELIVERED_HOLD = timedelta(minutes=30)
 LEFT_LIST_EXPIRY = timedelta(minutes=30)
 #: Fetches for an order that left the upcoming list, to catch DELIVERED.
 FINAL_FETCH_ATTEMPTS = 3
+#: An order that answered 404 is asked again after this long.
+NO_TRACKING_RETRY = timedelta(minutes=30)
 #: Longest automatic refresh interval once the courier is close.
 LATE_STAGE_INTERVAL = timedelta(seconds=60)
 #: Statuses in which the courier is on the way or at the door.
@@ -69,8 +71,12 @@ class TrackedOrder:
     final_fetches: int = 0
 
     def is_fresh(self, now: datetime) -> bool:
-        """Whether the last successful fetch is recent enough to trust."""
-        return now - self.fetched_at <= TRACKING_MAX_AGE
+        """Whether the last successful fetch is recent enough to trust.
+
+        A delivered order is final and never fetched again, so it stays
+        fresh for its whole DELIVERED_HOLD.
+        """
+        return self.delivered_at is not None or now - self.fetched_at <= TRACKING_MAX_AGE
 
     def is_expired(self, now: datetime) -> bool:
         """Whether this tracking should be dropped altogether."""
@@ -501,7 +507,8 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self._eta_poll_unsub: CALLBACK_TYPE | None = None
         # Live delivery tracking (kept outside self.data, which stays raw JSON).
         self._tracked: TrackedOrder | None = None
-        self._no_tracking: set[int] = set()
+        # Orders that answered 404, with when: asked again after NO_TRACKING_RETRY.
+        self._no_tracking: dict[int, datetime] = {}
         self._closed = False
         self._auto_refresh_eta = auto_refresh_eta
         self._eta_refresh_interval = timedelta(seconds=eta_refresh_interval)
@@ -614,6 +621,11 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         return tracked.tracking
 
     @property
+    def tracking_order_id(self) -> int | None:
+        """The order ID of the valid tracking (from the hub, not the response)."""
+        return self._tracked.order_id if self._tracked is not None and self.tracking else None
+
+    @property
     def tracked_order(self) -> TrackedOrder | None:
         """The raw tracked-order state (for diagnostics)."""
         return self._tracked
@@ -624,8 +636,10 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         tracked = self._tracked
         if tracked is None or self.tracking is None:
             return None
-        limits = [tracked.fetched_at + TRACKING_MAX_AGE]
-        if tracked.delivered_at is not None:
+        limits = []
+        if tracked.delivered_at is None:
+            limits.append(tracked.fetched_at + TRACKING_MAX_AGE)
+        else:
             limits.append(tracked.delivered_at + DELIVERED_HOLD)
         if tracked.not_upcoming_since is not None:
             limits.append(tracked.not_upcoming_since + LEFT_LIST_EXPIRY)
@@ -679,27 +693,38 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                 elif tracked.not_upcoming_since is None:
                     tracked.not_upcoming_since = now
 
-            target: int | None = None
-            if soonest is not None and soonest.id not in self._no_tracking and (
-                soonest.slot_since is None or soonest.slot_since - now <= TRACKING_LOOKAHEAD
-            ):
-                target = soonest.id
-            elif (
+            self._no_tracking = {
+                order_id: at
+                for order_id, at in self._no_tracking.items()
+                if now - at < NO_TRACKING_RETRY
+            }
+
+            # 1. A tracked order that left the list: fetch it again to catch
+            #    DELIVERED (bounded), independently of the next order.
+            if (
                 tracked is not None
                 and tracked.not_upcoming_since is not None
                 and not tracked.tracking.is_delivered
                 and tracked.final_fetches < FINAL_FETCH_ATTEMPTS
             ):
                 tracked.final_fetches += 1
-                target = tracked.order_id
-
-            if target is not None:
-                outcome, tracking = await self._fetch_tracking(target)
+                outcome, tracking = await self._fetch_tracking(tracked.order_id)
                 if outcome == "ok" and tracking is not None:
-                    just_delivered = self._store_tracking(target, tracking, now)
+                    just_delivered = self._store_tracking(tracked.order_id, tracking, now)
                 elif outcome == "not_found":
-                    self._no_tracking.add(target)
-                    if self._tracked is not None and self._tracked.order_id == target:
+                    self._tracked = None
+
+            # 2. The soonest order, once its slot is within the lookahead.
+            if soonest is not None and soonest.id not in self._no_tracking and (
+                soonest.slot_since is None or soonest.slot_since - now <= TRACKING_LOOKAHEAD
+            ):
+                # Tracking for it replaces any held (delivered or departed) order.
+                outcome, tracking = await self._fetch_tracking(soonest.id)
+                if outcome == "ok" and tracking is not None:
+                    just_delivered = self._store_tracking(soonest.id, tracking, now) or just_delivered
+                elif outcome == "not_found":
+                    self._no_tracking[soonest.id] = now
+                    if self._tracked is not None and self._tracked.order_id == soonest.id:
                         self._tracked = None
                 # "failed": keep what we had; it ages out via TRACKING_MAX_AGE.
 
@@ -746,8 +771,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         stops = tracking.stops_before
         if tracking.status not in COURIER_COMING and (stops is None or stops > 1):
             return False
-        estimate = tracking.estimated_arrival
-        return estimate is None or now <= estimate + MAX_OVERDUE
+        # Bounded by the estimate, else the slot end, plus MAX_OVERDUE.
+        limit = tracking.estimated_arrival or tracking.slot_till
+        return limit is not None and now <= limit + MAX_OVERDUE
 
     def _poll_window(self) -> tuple[datetime, datetime] | None:
         """ETA-30 min .. ETA+10 min around the courier's uncapped estimate.

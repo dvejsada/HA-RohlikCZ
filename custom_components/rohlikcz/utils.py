@@ -465,24 +465,30 @@ def parse_orders_for_calendar(next_orders: list[dict], delivered_orders: list[di
     
     return normalized_orders
 
-#: A phone number: "+" and 8+ digits (optionally spaced), or exactly nine
-#: digits standing alone (the national format, e.g. "777 123 456"). Longer
-#: digit runs such as order numbers are not matched.
-_PHONE_RE = re.compile(
-    r"\+\d(?:[\s\u00a0]?\d){7,}"
-    r"|(?<!\d)\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3}(?![\s\u00a0]?\d)"
-)
+#: A phone number: optional "+" or "00", then 9 or more digits that may be
+#: separated by spaces, non-breaking spaces, "-", "/", "." or brackets. This
+#: covers the national formats of all the shops' countries ("777 123 456",
+#: "0151 1234567", "06 30 123 4567") and international ones. Longer digit
+#: runs (such as order numbers) are dropped as well: privacy wins.
+_PHONE_RE = re.compile(r"(?:\+|\b00)?\d(?:[\s\u00a0\-/.()]{0,2}\d){8,}")
+#: A tel: link, whatever its visible text.
+_TEL_LINK_RE = re.compile(r"<a\b[^>]*href\s*=\s*[\"']?tel:[^>]*>.*?</a\s*>", re.I | re.S)
+_TEL_MARK = "\x00tel\x00"
 
 
 def strip_html_and_phones(text: str) -> str:
-    """Strip HTML tags and drop every sentence that contains a phone number.
+    """Strip HTML and drop every sentence that contains a phone number.
 
     Delivery announcements add the courier's phone number shortly before
     arrival ("… je na čísle <a href="tel:…">…</a>."). That is a third party's
     personal data and must not end up in entity attributes (and so in the
     recorder). Whole sentences are dropped so no dangling "call us on ." is
-    left, whatever the language.
+    left, whatever the language. Sentences with a ``tel:`` link are dropped
+    whatever the link text, and HTML entities are decoded first.
     """
-    plain = re.sub(r"<[^>]+>", "", text)
+    marked = _TEL_LINK_RE.sub(_TEL_MARK, text)
+    plain = html.unescape(re.sub(r"<[^>]+>", "", marked))
     sentences = re.split(r"(?<=[.!?])\s+", plain.strip())
-    return " ".join(s for s in sentences if s and not _PHONE_RE.search(s))
+    return " ".join(
+        s for s in sentences if s and _TEL_MARK not in s and not _PHONE_RE.search(s)
+    )

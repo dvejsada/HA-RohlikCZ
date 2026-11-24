@@ -498,9 +498,8 @@ def test_phone_numbers_are_stripped_from_announcement_text() -> None:
     )
     assert strip_html_and_phones(text) == f"{COURIER} už Vám veze celkem 8 tašek."
     assert strip_html_and_phones("Volejte 777 123 456. Díky!") == "Díky!"
-    assert strip_html_and_phones("Objednávka 1000000001 je na cestě.") == (
-        "Objednávka 1000000001 je na cestě."
-    )
+    # Long digit runs are dropped too (privacy wins over keeping an order number).
+    assert strip_html_and_phones("Objednávka 1000000001 je na cestě. Díky!") == "Díky!"
 
 
 async def test_delivery_info_attribute_has_no_phone(hass: HomeAssistant, freezer) -> None:
@@ -539,3 +538,181 @@ async def test_diagnostics_hide_courier_and_location(hass: HomeAssistant, freeze
     assert tracking["status"] == "ON_THE_WAY"
     assert tracking["order_id"] == ORDER_ID
     assert tracking["valid"] is True
+
+
+# --------------------------------------------------------- review follow-ups
+
+
+async def test_delivered_is_shown_for_the_full_hold(hass: HomeAssistant, freezer) -> None:
+    """Delivered tracking is never refetched, yet must not age out after 15 min."""
+    freezer.move_to(NOW)
+    entry, fetch = await _setup(hass, _data(), _tracking("HANDING_OVER", stops=0))
+    fetch.return_value = _tracking("DELIVERED", stops=None)
+    await _refresh(hass, entry, _data(orders=[]))
+    for minutes in (10, 20, 29):
+        await _move_to(hass, freezer, NOW + timedelta(minutes=minutes))
+        await _refresh(hass, entry)
+        assert _status(hass) == "delivered", minutes
+    await _move_to(hass, freezer, NOW + timedelta(minutes=31))
+    assert _status(hass) == STATE_UNKNOWN
+
+
+async def test_latch_hard_timeout_is_final_for_a_stuck_delivery(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A delivery stuck in ARRIVED must not keep the latches on forever."""
+    freezer.move_to(NOW)
+    eta = NOW + timedelta(minutes=2)
+    entry, fetch = await _setup(hass, _data(), _tracking("ARRIVED", eta=eta, stops=0))
+    assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_ON
+    when = NOW
+    while when < eta + timedelta(hours=1, minutes=5):
+        when += timedelta(minutes=5)
+        await _move_to(hass, freezer, when)
+        await _refresh(hass, entry)
+    assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_OFF
+    await _move_to(hass, freezer, when + timedelta(minutes=10))
+    await _refresh(hass, entry)
+    assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_OFF
+    assert _state(hass, "binary_sensor", "last_mile").state == STATE_OFF
+
+
+async def test_last_mile_does_not_flap_while_queued(hass: HomeAssistant, freezer) -> None:
+    """One stop left, tracked ETA moves later out of a 12-minute lead window."""
+    from custom_components.rohlikcz.const import CONF_LAST_MILE_LEAD
+
+    eta = SLOT_START - timedelta(minutes=50)  # early delivery allowed: not capped
+    freezer.move_to(eta - timedelta(minutes=11))
+    entry, fetch = await _setup(
+        hass, _data(), _tracking("IN_QUEUE", eta=eta, stops=1), {CONF_LAST_MILE_LEAD: 12}
+    )
+    assert _state(hass, "binary_sensor", "last_mile").state == STATE_ON
+    fetch.return_value = _tracking("IN_QUEUE", eta=eta + timedelta(minutes=3), stops=1)
+    await _refresh(hass, entry)
+    assert _state(hass, "binary_sensor", "last_mile").state == STATE_ON
+
+
+async def test_restart_keeps_a_latched_last_mile_on(hass: HomeAssistant, freezer) -> None:
+    """Latched while on the way, ETA then moved out of the lead: a reload keeps it on."""
+    eta = NOW + timedelta(minutes=4)
+    freezer.move_to(NOW)
+    data = _data()
+    entry, fetch = await _setup(hass, data, _tracking("ON_THE_WAY", eta=eta, stops=0))
+    later = _tracking("ON_THE_WAY", eta=eta + timedelta(minutes=10), stops=0)
+    fetch.return_value = later
+    await _refresh(hass, entry)
+    entity_id = _state(hass, "binary_sensor", "last_mile").entity_id
+    assert hass.states.get(entity_id).state == STATE_ON
+
+    seen: list[str] = []
+    hass.bus.async_listen(
+        "state_changed",
+        lambda event: event.data["entity_id"] == entity_id
+        and event.data["new_state"] is not None
+        and seen.append(event.data["new_state"].state),
+    )
+    with patch(
+        "custom_components.rohlikcz.hub.RohlikAPI.get_data",
+        new=AsyncMock(return_value=data),
+    ), patch(
+        "rohlik_api.services.orders.OrderService.get_delivery_tracking",
+        new=AsyncMock(return_value=later),
+    ):
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == STATE_ON
+    assert STATE_OFF not in seen
+
+
+async def test_not_found_is_retried_after_30_minutes(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    entry, fetch = await _setup(hass, _data(), None)
+    await _move_to(hass, freezer, NOW + timedelta(minutes=20))
+    await _refresh(hass, entry)
+    assert fetch.await_count == 1
+    fetch.return_value = _tracking("IN_QUEUE")
+    await _move_to(hass, freezer, NOW + timedelta(minutes=31))
+    await _refresh(hass, entry)
+    assert fetch.await_count >= 2  # the scheduled refresh at +30 min may retry first
+    assert _status(hass) == "in_queue"
+
+
+async def test_final_fetch_is_not_delayed_by_the_next_order(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    entry, fetch = await _setup(hass, _data(), _tracking("HANDING_OVER", stops=0))
+
+    async def by_order(order_id, raise_on_error=False):
+        return _tracking("DELIVERED", stops=None) if order_id == ORDER_ID else None
+
+    fetch.side_effect = by_order
+    await _refresh(hass, entry, _data(orders=[_order(7002, NOW + timedelta(hours=1))]))
+    assert _status(hass) == "delivered"
+    assert _state(hass, "binary_sensor", "courier_at_door").state == STATE_OFF
+
+
+async def test_late_stage_without_estimate_is_bounded(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(NOW)
+    entry, _fetch = await _setup(hass, _data(), _tracking("ON_THE_WAY", eta=None, stops=0))
+    account = entry.runtime_data
+    assert account._late_stage(dt_util.utcnow())
+    slot_till = SLOT_START + timedelta(minutes=15)
+    assert not account._late_stage(dt_util.as_utc(slot_till + timedelta(hours=1, minutes=1)))
+
+
+def test_more_phone_formats_are_stripped() -> None:
+    for number in (
+        "700-000-001",
+        "+420-700-000-001",
+        "00420700000001",
+        "700&nbsp;000&nbsp;001",
+        "700 00 00 01",
+        "0151 1234567",
+        "0664 1234567",
+        "06 30 123 4567",
+    ):
+        assert strip_html_and_phones(f"Volejte {number}. Díky!") == "Díky!", number
+    assert strip_html_and_phones(
+        'Zavolejte <a href="tel:+420000000000">kurýrovi</a>. Díky!'
+    ) == "Díky!"
+    for kept in ("Doručíme v 13:00.", "Cena 1 097,64 Kč.", "Doručeno 24.11.2026.", "Celkem 8 tašek."):
+        assert strip_html_and_phones(kept) == kept
+
+
+async def test_restored_delivery_info_is_sanitised(hass: HomeAssistant, freezer) -> None:
+    from homeassistant.core import State
+    from pytest_homeassistant_custom_component.common import mock_restore_cache
+
+    freezer.move_to(NOW)
+    mock_restore_cache(
+        hass,
+        [
+            State(
+                "sensor.test_user_delivery_information",
+                "Doručíme za 8 minut.",
+                {"Additional Content": f"Veze 8 tašek. Volejte {PHONE}."},
+            )
+        ],
+    )
+    await _setup(hass, _data(announcements=[]))
+    state = _state(hass, "sensor", "delivery_info")
+    assert PHONE not in str(state.attributes)
+
+
+async def test_old_eta_store_without_source_loads(hass: HomeAssistant, hass_storage) -> None:
+    from custom_components.rohlikcz.eta import DeliveryEtaTracker
+
+    hass_storage["rohlikcz_test_eta"] = {
+        "version": 1,
+        "key": "rohlikcz_test_eta",
+        "data": {
+            "last_value": NOW.isoformat(),
+            "last_live_value": NOW.isoformat(),
+            "last_live_order_id": str(ORDER_ID),
+            "last_live_slot_since": SLOT_START.isoformat(),
+            "announcement_arrivals": [],
+        },
+    }
+    tracker = DeliveryEtaTracker(hass, "rohlikcz_test_eta", PRAGUE)
+    await tracker.async_load()
+    assert tracker.last_live_source == "announcement"
+    assert tracker.last_live_order_id == str(ORDER_ID)

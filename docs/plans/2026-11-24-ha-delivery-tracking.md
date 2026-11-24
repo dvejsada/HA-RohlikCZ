@@ -266,9 +266,21 @@ until delivery, at most every 60 s in the final stage.
 ## Implementation notes (deviations from revision 2)
 
 1. **The poll requests run one after the other, not concurrently.** Running them in parallel delayed re-arming the poll inside a background task. It saved under a second per minute, so it wasn't worth the extra timing risk.
-2. **Last Mile latches only once tracking shows the courier on the way or later** (`ON_THE_WAY`, `ARRIVED`, `HANDING_OVER`).
-   - That is exactly where the flap was observed.
+2. **Last Mile latches only when tracking drives the ETA:** the courier is on the way or later, or the ETA source is `tracking` (queued).
+   - A code review showed a queued-phase flap with one stop left and a 10–12-minute lead, so the latch covers that case too.
    - Shops or phases without tracking keep the earlier behaviour: a later announced ETA still turns it off, as `test_last_mile_follows_later_eta` expects.
 3. **The ETA tracker keeps string order IDs internally**, because they are persisted that way. It compares `str(tracking.order_id)`. The hub and the new entities use ints.
 4. **Kept tracking does not expire on its own timer.** Expiry (max age, the delivered hold, leaving the list) is evaluated on every refresh and by entity timers armed at `tracking_valid_until`.
 5. **Pre-existing bug fixed:** `IsOrderedSensor` and `hub.is_ordered` crashed with `len(None)` when the upcoming-orders request failed (`next_order` is `None`).
+6. **Changes after the code review:**
+   - **Hard deadline:** an order whose latch hit it is never latched again, and Last Mile stays off for it.
+   - **Delivered hold:** a delivered order stays fresh for the full 30-minute hold.
+   - **404s:** an order that answered 404 is asked again after 30 minutes.
+   - **Final fetch:** the fetch for a departed order runs in the same refresh as the next order's fetch.
+   - **Late-stage polling** without an estimate is bounded by slot end + 1 h.
+   - **Order IDs:** latches use the hub's order ID.
+   - **Phone stripping:**
+     - also drops sentences with `tel:` links and decodes HTML entities
+     - matches 9+ digits with common separators, so it also catches DE/AT/HU formats and `00…` prefixes; long order numbers are dropped too
+     - is applied to restored pre-1.3.0 attributes
+   - **Courier at the Door** has no device class (`PRESENCE` reads "Home/Away").
