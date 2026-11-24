@@ -13,8 +13,9 @@ from zoneinfo import ZoneInfo
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
+from rohlik_api import DeliveryTracking, NextDelivery, UpcomingOrder
 
-from .utils import extract_delivery_datetime, get_earliest_order, parse_delivery_datetime_string
+from .utils import extract_delivery_datetime, parse_delivery_datetime_string
 
 #: An ETA is given up this long after it has passed: a kept courier ETA is
 #: dropped, and Delivery Time Remaining / Delivery Last Mile stop.
@@ -27,7 +28,10 @@ ETA_STORE_VERSION = 1
 _SAVE_DELAY = 10
 
 #: Where the current ETA came from.
-EtaSource = Literal["announcement", "slot", "last_known"]
+EtaSource = Literal["tracking", "announcement", "slot", "last_known"]
+
+#: Sources that are a courier's estimate rather than the booked slot.
+LIVE_SOURCES: tuple[EtaSource, ...] = ("tracking", "announcement")
 
 
 def eta_storage_key(entry_id: str) -> str:
@@ -47,6 +51,25 @@ def announcements_of(data: dict | None) -> list:
         )
         or []
     )
+
+
+def soonest_upcoming(data: dict | None) -> tuple[UpcomingOrder | None, dict | None]:
+    """Return the soonest upcoming order, typed and raw, or (None, None).
+
+    The one place that decides which order is "the next delivery", shared by
+    the hub's tracking and the ETA tracker so both always agree. Orders are
+    sorted by slot start in absolute time; orders without a slot come last.
+    """
+    raw_orders = (data or {}).get("next_order")
+    orders = UpcomingOrder.list_from_api(raw_orders)
+    if not orders:
+        return None, None
+    soonest = orders[0]
+    raw = next(
+        (o for o in raw_orders if isinstance(o, dict) and o.get("id") == soonest.id),
+        None,
+    )
+    return soonest, raw
 
 
 def announcement_slot(
@@ -99,6 +122,7 @@ class DeliveryEtaTracker:
         self.last_live_value: datetime | None = None
         self.last_live_order_id: str | None = None
         self.last_live_slot_since: datetime | None = None
+        self.last_live_source: EtaSource = "announcement"
         # When each announcement (order ID, text) was first received.
         self.announcement_arrivals: dict[tuple[str, str], datetime] = {}
         #: True once state was loaded from the store (or migrated).
@@ -110,8 +134,8 @@ class DeliveryEtaTracker:
 
     @property
     def is_live(self) -> bool:
-        """Whether the ETA comes from a courier announcement (current or kept)."""
-        return self.source == "announcement"
+        """Whether the ETA is a courier estimate (tracking or announcement, current or kept)."""
+        return self.source in LIVE_SOURCES
 
     @property
     def stale_at(self) -> datetime | None:
@@ -137,6 +161,7 @@ class DeliveryEtaTracker:
             "order_id": self.order_id,
             "last_live_value": _iso(self.last_live_value),
             "last_live_order_id": self.last_live_order_id,
+            "last_live_source": self.last_live_source,
             "restored": self.restored,
         }
 
@@ -150,6 +175,9 @@ class DeliveryEtaTracker:
         self.last_live_value = _parse(data.get("last_live_value"))
         self.last_live_order_id = data.get("last_live_order_id")
         self.last_live_slot_since = _parse(data.get("last_live_slot_since"))
+        # Stores written before tracking existed only kept announcement ETAs.
+        source = data.get("last_live_source")
+        self.last_live_source = source if source in LIVE_SOURCES else "announcement"
         self.announcement_arrivals = {
             (str(order_id), str(content)): received_at
             for order_id, content, received in data.get("announcement_arrivals") or []
@@ -187,6 +215,7 @@ class DeliveryEtaTracker:
             "last_live_value": _iso(self.last_live_value),
             "last_live_order_id": self.last_live_order_id,
             "last_live_slot_since": _iso(self.last_live_slot_since),
+            "last_live_source": self.last_live_source,
             "announcement_arrivals": [
                 [order_id, content, received.isoformat()]
                 for (order_id, content), received in self.announcement_arrivals.items()
@@ -220,8 +249,12 @@ class DeliveryEtaTracker:
         """
         return self.announcement_arrivals.get(self._announcement_key(announcement)) or dt_util.now()
 
-    def update(self, data: dict | None) -> None:
+    def update(self, data: dict | None, tracking: DeliveryTracking | None = None) -> None:
         """Record new announcements and recompute the ETA from coordinator data.
+
+        ``tracking`` is the hub's current (valid) delivery tracking, if any; it
+        takes priority over announcements when it belongs to the soonest order
+        and has a courier estimate.
 
         Arrivals of announcements no longer present are dropped, so the same
         text arriving again later starts a fresh clock.
@@ -229,18 +262,18 @@ class DeliveryEtaTracker:
         data = data or {}
         before = (
             self.last_value, self.last_live_value, self.last_live_order_id,
-            self.announcement_arrivals,
+            self.last_live_source, self.announcement_arrivals,
         )
         now = dt_util.now()
         self.announcement_arrivals = {
             key: self.announcement_arrivals.get(key, now)
             for key in map(self._announcement_key, announcements_of(data))
         }
-        eta, self.source = self._resolve(data)
+        eta, self.source = self._resolve(data, tracking)
         self.eta = dt_util.as_utc(eta) if eta is not None else None
         after = (
             self.last_value, self.last_live_value, self.last_live_order_id,
-            self.announcement_arrivals,
+            self.last_live_source, self.announcement_arrivals,
         )
         if after != before:
             self.async_schedule_save()
@@ -249,6 +282,17 @@ class DeliveryEtaTracker:
         self.last_live_value = None
         self.last_live_order_id = None
         self.last_live_slot_since = None
+        self.last_live_source = "announcement"
+
+    def _remember_live(
+        self, value: datetime, order_id: str | None, slot_since: datetime | None,
+        source: EtaSource,
+    ) -> None:
+        self.last_value = value
+        self.last_live_value = value
+        self.last_live_order_id = order_id
+        self.last_live_slot_since = slot_since
+        self.last_live_source = source
 
     def _preserved_live_value(
         self,
@@ -270,16 +314,15 @@ class DeliveryEtaTracker:
 
         return self.last_live_value
 
-    def _resolve(self, data: dict) -> tuple[datetime | None, EtaSource | None]:
+    def _resolve(
+        self, data: dict, tracking: DeliveryTracking | None
+    ) -> tuple[datetime | None, EtaSource | None]:
         now = dt_util.now()
         announcements = announcements_of(data)
         upcoming_orders: list = data.get("next_order") or []
-        earliest_order = get_earliest_order(upcoming_orders)
-        earliest_order_id = (
-            str(earliest_order.get("id"))
-            if earliest_order is not None and earliest_order.get("id") is not None
-            else None
-        )
+        soonest, earliest_order = soonest_upcoming(data)
+        # Order IDs are compared as strings here: that is how they are stored.
+        earliest_order_id = str(soonest.id) if soonest is not None else None
         delivery_slot = (earliest_order or {}).get("deliverySlot") or {}
         slot_since = parse_delivery_datetime_string(delivery_slot.get("since"))
         self.order_id = earliest_order_id
@@ -293,6 +336,23 @@ class DeliveryEtaTracker:
         preserved_live_value = self._preserved_live_value(
             earliest_order_id, slot_since, now
         )
+
+        # 1. The courier's tracked estimate for the soonest order.
+        if (
+            tracking is not None
+            and soonest is not None
+            and tracking.order_id == soonest.id
+            and tracking.estimated_arrival is not None
+            and not tracking.is_delivered
+        ):
+            try:
+                resolved = NextDelivery.resolve(soonest, tracking)
+            except ValueError:
+                resolved = None
+            if resolved is not None and resolved.eta is not None and resolved.eta_source == "tracking":
+                delivery_time = dt_util.as_local(resolved.eta)
+                self._remember_live(delivery_time, earliest_order_id, slot_since, "tracking")
+                return delivery_time, "tracking"
 
         if announcements:
             announcement = announcements[0]
@@ -315,18 +375,18 @@ class DeliveryEtaTracker:
                     slot_till=announced_till,
                 )
                 if delivery_time is not None:
-                    self.last_value = delivery_time
-                    self.last_live_value = delivery_time
-                    self.last_live_order_id = earliest_order_id
-                    self.last_live_slot_since = slot_since
+                    self._remember_live(
+                        delivery_time, earliest_order_id, slot_since, "announcement"
+                    )
                     return delivery_time, "announcement"
 
         if preserved_live_value is not None:
             # Rohlík commonly clears the announcement shortly before delivery,
             # or sends one without a time, or one about a later concurrent
-            # order. Keep the precise ETA while the same order is the soonest.
+            # order; tracking can fail for a while. Keep the precise ETA while
+            # the same order is the soonest.
             self.last_value = preserved_live_value
-            return preserved_live_value, "announcement"
+            return preserved_live_value, self.last_live_source
 
         # Fall back to the delivery slot of the soonest order.
         if slot_since is not None:
