@@ -122,7 +122,7 @@ refresh_slots:
 
 update_delivery_times:
   name: Update delivery times
-  description: Cheaply refresh only the delivery-time announcement (one request). The delivery ETA of an upcoming order shifts often, so this is light enough to poll every minute shortly before a delivery to keep the delivery time sensor accurate.
+  description: Cheaply refresh only the courier's delivery tracking, plus the delivery-time announcement when tracking has no estimate (one or two requests). The delivery ETA of an upcoming order shifts often, so this is light enough to poll every minute shortly before a delivery to keep the delivery sensors accurate.
   fields:
     config_entry_id:
       name: Account

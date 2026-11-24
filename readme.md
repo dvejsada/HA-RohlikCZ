@@ -68,7 +68,7 @@ Amounts (credit, cart total, spending) are reported in the shop's currency (CZK,
 > Entries created before shop selection existed point at Rohlík.cz. To move one to another shop (e.g. Knuspr.de), open the integration entry's **⋮ menu → Reconfigure** and pick the shop — no need to remove and re-add it.
 
 > [!NOTE]
-> The **Delivery Time** sensor reads the courier's arrival time from the shop's delivery announcement. Announcements that give a clock time work in every shop; "in N minutes" countdowns are currently only understood in Czech.
+> The delivery sensors use the courier's **live delivery tracking** (status, estimated arrival and stops before your order) when the shop provides it. This was verified on Rohlík.cz; for other shops, or when tracking is not available, the **Delivery Time** sensor falls back to the shop's delivery announcement. Announcements that give a clock time work in every shop; "in N minutes" countdowns are currently only understood in Czech. Tracking uses an unofficial endpoint and is not kept across Home Assistant restarts (it is fetched again on the first refresh).
 
 ### Optional: Spending Analytics
 
@@ -87,8 +87,8 @@ The same **Configure** dialog also holds the delivery-time settings:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Last mile lead time** | 5 min | How long before the expected delivery time the **Delivery Last Mile** sensor turns on (1–30 minutes) |
-| **Auto-refresh delivery time** | On | Refresh the courier's delivery announcement automatically from 30 minutes before the expected delivery until 10 minutes after it (until the courier announces a time, the booked slot start counts as the expected delivery) |
-| **Delivery time refresh interval** | 60 s | How often the automatic refresh runs (30–300 seconds); each refresh is a single lightweight request |
+| **Auto-refresh delivery time** | On | Refresh the courier's delivery time automatically from 30 minutes before the expected delivery until 10 minutes after it, and at least every minute while the courier is close (one stop away, on the way or at the door) until the order is delivered. Without auto-refresh, the delivery status is updated with the regular 10-minute refresh only |
+| **Delivery time refresh interval** | 60 s | How often the automatic refresh runs (30–300 seconds); each refresh is a single lightweight request. While the courier is close it runs at least every 60 seconds |
 
 ---
 
@@ -104,7 +104,8 @@ The same **Configure** dialog also holds the delivery-time settings:
 | **Timeslot Reservation** | Active when you have a reserved delivery timeslot |
 | **Parents Club** | Active when you are a member of the Parents Club |
 | **Express Available** | Active when express delivery is currently available in your area |
-| **Delivery Last Mile** | Active from the configured lead time (default 5 minutes) before the courier's expected delivery time until the order is delivered (at most an hour after the expected time). Only a courier announcement turns it on, never the booked slot alone — handy as a condition for opening the building entrance when the doorbell rings |
+| **Delivery Last Mile** | Active from the configured lead time (default 5 minutes) before the courier's expected delivery time, or as soon as the courier arrives, until the order is delivered (at most an hour after the expected time). Only a courier estimate (tracking or announcement) turns it on, never the booked slot alone. Once the courier is on the way it stays on even if the estimate moves a few minutes later — handy as a condition for opening the building entrance when the doorbell rings |
+| **Courier at the Door** | Active from the moment the courier arrives at your address until the order is delivered, from the shop's live delivery tracking. It stays on through a failed refresh or a restart, so it is a safe automation trigger — see [`automations/courier_arrived.yaml`](automations/courier_arrived.yaml). Needs **Auto-refresh delivery time** (on by default): the courier is usually at the door for only a few minutes, which the regular 10-minute refresh can miss |
 
 ### 🟢 Sensors
 
@@ -126,8 +127,10 @@ The same **Configure** dialog also holds the delivery-time settings:
 | **Slot Eco Time** | Timestamp of the nearest eco delivery slot |
 | **Delivery Slot Start** | Start of the delivery window for your next order |
 | **Delivery Slot End** | End of the delivery window for your next order |
-| **Delivery Time** | Predicted exact delivery time for your next order |
-| **Delivery Time Remaining** | Minutes until the **Delivery Time**, counted down locally every minute between refreshes (within 90 minutes of delivery). Shows 0 when the delivery is due and unknown an hour after it; the `source` attribute says whether the time comes from the courier's announcement or only the booked slot |
+| **Delivery Time** | Predicted exact delivery time for your next order: the courier's tracked estimate when available (never before the slot start while the order is still queued, unless you allowed early delivery), otherwise the courier's announcement or the booked slot |
+| **Delivery Status** | The courier's progress with your next order: `in_queue`, `on_the_way`, `arrived`, `handing_over` or `delivered` (shown for 30 minutes after delivery, or at least 5 minutes before the next order takes over); unknown when the shop provides no tracking |
+| **Stops Before Delivery** | How many stops the courier makes before yours; `0` means you are next |
+| **Delivery Time Remaining** | Minutes until the **Delivery Time**, counted down locally every minute between refreshes (within 90 minutes of delivery). Shows 0 when the delivery is due and unknown an hour after it; the `source` attribute says whether the time comes from courier tracking, the courier's announcement or only the booked slot |
 | **Monthly Spent** | Total amount spent this month |
 | **Yearly Spent** | Total amount spent this year *(requires Spending Analytics)* |
 | **All Time Spent** | Total spent across all tracked orders *(requires Spending Analytics)*; the `by_year` attribute breaks the total down per year (`total` and `order_count` per year) |
@@ -178,7 +181,7 @@ Each sensor's attributes contain the top N items (configurable, default 10) sort
 | **`rohlikcz.get_cart_content`** | Get the current contents of your shopping cart |
 | **`rohlikcz.update_data`** | Force an immediate full data refresh from Rohlík.cz |
 | **`rohlikcz.refresh_slots`** | Cheaply refresh only the delivery-slot data with a single request — light enough to poll every few seconds to catch express availability |
-| **`rohlikcz.update_delivery_times`** | Cheaply refresh only the delivery-time announcement with a single request — light enough to poll every minute to track the shifting delivery ETA |
+| **`rohlikcz.update_delivery_times`** | Cheaply refresh only the delivery tracking (and the delivery-time announcement when tracking has no estimate) — light enough to poll every minute to track the shifting delivery ETA |
 | **`rohlikcz.fetch_order_history`** | Download your complete order history and store it locally (backfill) |
 | **`rohlikcz.enrich_orders`** | Enrich stored orders with item details and product categories to populate the spending sensors |
 
@@ -194,7 +197,7 @@ Each sensor's attributes contain the top N items (configurable, default 10) sort
 
 Data is refreshed from Rohlík.cz **every 10 minutes** automatically. The update covers account details, premium status, delivery slots, shopping cart, and order history.
 
-You can trigger an immediate refresh at any time using the **`rohlikcz.update_data`** action, refresh just the delivery slots more frequently with **`rohlikcz.refresh_slots`**, or refresh just the delivery-time announcement with **`rohlikcz.update_delivery_times`**.
+You can trigger an immediate refresh at any time using the **`rohlikcz.update_data`** action, refresh just the delivery slots more frequently with **`rohlikcz.refresh_slots`**, or refresh just the delivery tracking and announcement with **`rohlikcz.update_delivery_times`**.
 
 ---
 

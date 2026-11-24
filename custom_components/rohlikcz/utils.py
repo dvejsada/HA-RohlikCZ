@@ -464,3 +464,62 @@ def parse_orders_for_calendar(next_orders: list[dict], delivered_orders: list[di
     normalized_orders.sort(key=lambda x: x['start'])
     
     return normalized_orders
+
+#: A phone number: optional "+" or "00", then 9 or more digits that may be
+#: separated by up to three spaces, non-breaking spaces, "-", "/", "." or
+#: brackets. This covers the national formats of all the shops' countries
+#: ("777 123 456", "0151 1234567", "06 30 123 4567") and international ones.
+#: Longer digit runs (such as order numbers) are dropped as well: privacy wins.
+_PHONE_RE = re.compile(r"(?:\+|\b00)?\d(?:[\s\u00a0\-\u2010-\u2015/.()]{0,3}\d){8,}")
+#: Dates and times are blanked before matching, so "24.11.2026 13:00" is
+#: not mistaken for a phone number.
+_DATE_TIME_RE = re.compile(
+    # Dates (DD.MM.[YYYY], YYYY-MM-DD / YYYY.MM.DD, DD/MM/YYYY), anchored so
+    # they cannot be the leading groups of a longer dash/dot/slash-separated
+    # phone number such as "06-30-123-4567" ...
+    r"(?<![\d./-])"
+    r"(?:\d{1,2}\.\s?\d{1,2}\.(?:\s?\d{4})?|\d{4}[-./]\s?\d{1,2}[-./]\s?\d{1,2}\.?"
+    r"|\d{1,2}/\d{1,2}/\d{4})"
+    r"(?![./-]?\d)"
+    # ... and clock times.
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"
+)
+#: A tel: or WhatsApp link, whatever its visible text.
+_TEL_LINK_RE = re.compile(
+    r"<a\b[^>]*href\s*=\s*[\"']?\s*(?:tel:|sms:|https?://(?:wa\.me|api\.whatsapp\.com)/)"
+    r"[^>]*>.*?</a\s*>",
+    re.I | re.S,
+)
+_TEL_MARK = "\x00tel\x00"
+
+
+def _sentences(text: str) -> list[str]:
+    """Split into sentences; a fragment not starting with a capital letter
+    (e.g. after the abbreviation "tel.") is kept with the previous one."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    sentences: list[str] = []
+    for part in parts:
+        if sentences and part and not part[0].isupper() and not part.startswith(_TEL_MARK):
+            sentences[-1] = f"{sentences[-1]} {part}"
+        else:
+            sentences.append(part)
+    return sentences
+
+
+def _has_phone(sentence: str) -> bool:
+    return _TEL_MARK in sentence or bool(_PHONE_RE.search(_DATE_TIME_RE.sub(" ", sentence)))
+
+
+def strip_html_and_phones(text: str) -> str:
+    """Strip HTML and drop every sentence that contains a phone number.
+
+    Delivery announcements add the courier's phone number shortly before
+    arrival ("… je na čísle <a href="tel:…">…</a>."). That is a third party's
+    personal data and must not end up in entity attributes (and so in the
+    recorder). Whole sentences are dropped so no dangling "call us on ." is
+    left, whatever the language. Sentences with a ``tel:``/WhatsApp link are
+    dropped whatever the link text, and HTML entities are decoded first.
+    """
+    marked = _TEL_LINK_RE.sub(_TEL_MARK, text)
+    plain = html.unescape(re.sub(r"<[^>]+>", "", marked))
+    return " ".join(s for s in _sentences(plain) if s and not _has_phone(s))

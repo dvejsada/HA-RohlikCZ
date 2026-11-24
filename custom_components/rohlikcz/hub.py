@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import os
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -17,13 +17,21 @@ from homeassistant.helpers.event import async_call_later, async_track_point_in_t
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
-from rohlik_api import InvalidCredentialsError, RohlikAPI, RohlikAPIError, Site
+from rohlik_api import (
+    DeliveryTracking,
+    InvalidCredentialsError,
+    RohlikAPI,
+    RohlikAPIError,
+    Site,
+    TrackingStatus,
+    UpcomingOrder,
+)
 
 from .const import (
     DOMAIN, get_site,
     DEFAULT_AUTO_REFRESH_ETA, DEFAULT_ETA_REFRESH_INTERVAL, DEFAULT_LAST_MILE_LEAD,
 )
-from .eta import DeliveryEtaTracker, eta_storage_key
+from .eta import MAX_OVERDUE, DeliveryEtaTracker, eta_storage_key, soonest_upcoming
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)
@@ -32,6 +40,69 @@ UPDATE_INTERVAL = timedelta(seconds=600)
 ETA_POLL_BEFORE = timedelta(minutes=30)
 #: ... until this long after it.
 ETA_POLL_AFTER = timedelta(minutes=10)
+
+#: Delivery tracking is fetched once the soonest slot starts within this long.
+TRACKING_LOOKAHEAD = timedelta(hours=4)
+#: Kept tracking without a successful fetch for this long counts as unknown.
+TRACKING_MAX_AGE = timedelta(minutes=15)
+#: A delivered order's tracking is shown for this long after delivery.
+DELIVERED_HOLD = timedelta(minutes=30)
+#: Tracking of an order that left the upcoming list is dropped after this long.
+LEFT_LIST_EXPIRY = timedelta(minutes=30)
+#: Fetches for an order that left the upcoming list, to catch DELIVERED.
+FINAL_FETCH_ATTEMPTS = 3
+#: A delivered order is shown at least this long before the next order's
+#: tracking replaces it, so "delivered" is always observable.
+DELIVERED_MIN_SHOW = timedelta(minutes=5)
+#: An order that answered 404 is asked again after this long.
+NO_TRACKING_RETRY = timedelta(minutes=30)
+#: Longest automatic refresh interval once the courier is close.
+LATE_STAGE_INTERVAL = timedelta(seconds=60)
+#: Latches and late-stage polling end at the latest this long after the slot end.
+LATCH_HARD_CAP = timedelta(hours=4)
+#: Statuses in which the courier is on the way or at the door.
+COURIER_COMING = (TrackingStatus.ON_THE_WAY, TrackingStatus.ARRIVED, TrackingStatus.HANDING_OVER)
+
+
+@dataclass
+class TrackedOrder:
+    """Delivery tracking of one order, as last fetched by the hub."""
+
+    order_id: int
+    tracking: DeliveryTracking
+    fetched_at: datetime
+    not_upcoming_since: datetime | None = None
+    delivered_at: datetime | None = None
+    final_fetches: int = 0
+
+    def is_fresh(self, now: datetime) -> bool:
+        """Whether the last successful fetch is recent enough to trust.
+
+        A delivered order is final and never fetched again, so it stays
+        fresh for its whole DELIVERED_HOLD.
+        """
+        return self.delivered_at is not None or now - self.fetched_at <= TRACKING_MAX_AGE
+
+    def is_expired(self, now: datetime) -> bool:
+        """Whether this tracking should be dropped altogether."""
+        if self.delivered_at is not None and now - self.delivered_at > DELIVERED_HOLD:
+            return True
+        return (
+            self.not_upcoming_since is not None
+            and now - self.not_upcoming_since > LEFT_LIST_EXPIRY
+        )
+
+    def change_key(self) -> tuple:
+        """What entities care about; seconds-level ETA jitter is ignored."""
+        t = self.tracking
+        eta = t.estimated_arrival
+        return (
+            self.order_id,
+            t.status,
+            eta.replace(second=0, microsecond=0) if eta else None,
+            t.stops_before,
+            t.early_delivery_requested,
+        )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -439,6 +510,10 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         )
         self._eta_stale_unsub: CALLBACK_TYPE | None = None
         self._eta_poll_unsub: CALLBACK_TYPE | None = None
+        # Live delivery tracking (kept outside self.data, which stays raw JSON).
+        self._tracked: TrackedOrder | None = None
+        # Orders that answered 404, with when: asked again after NO_TRACKING_RETRY.
+        self._no_tracking: dict[int, datetime] = {}
         self._closed = False
         self._auto_refresh_eta = auto_refresh_eta
         self._eta_refresh_interval = timedelta(seconds=eta_refresh_interval)
@@ -517,7 +592,7 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
 
     @property
     def is_ordered(self) -> bool:
-        return len(self.data.get('next_order', [])) > 0
+        return len(self.data.get('next_order') or []) > 0
 
     @property
     def order_store(self) -> OrderStore | None:
@@ -534,10 +609,154 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         # After unload, a late update (e.g. an in-flight service call) must
         # not touch the ETA state or arm timers.
         if not self._closed:
-            self._eta.update(self.data)
+            self._eta.update(self.data, self.tracking, self.tracking_order_id)
             self._arm_eta_stale_timer()
             self._schedule_eta_poll()
         super().async_update_listeners()
+
+    # ---------------------------------------------------------- delivery tracking
+
+    @property
+    def tracking(self) -> DeliveryTracking | None:
+        """The tracked order's delivery tracking, if fresh and not expired."""
+        tracked = self._tracked
+        now = dt_util.utcnow()
+        if tracked is None or not tracked.is_fresh(now) or tracked.is_expired(now):
+            return None
+        return tracked.tracking
+
+    @property
+    def tracking_order_id(self) -> int | None:
+        """The order ID of the valid tracking (from the hub, not the response)."""
+        return self._tracked.order_id if self._tracked is not None and self.tracking else None
+
+    @property
+    def tracked_order(self) -> TrackedOrder | None:
+        """The raw tracked-order state (for diagnostics)."""
+        return self._tracked
+
+    @property
+    def tracking_valid_until(self) -> datetime | None:
+        """When the current tracking stops counting as valid (UTC), or None."""
+        tracked = self._tracked
+        if tracked is None or self.tracking is None:
+            return None
+        limits = []
+        if tracked.delivered_at is None:
+            limits.append(tracked.fetched_at + TRACKING_MAX_AGE)
+        else:
+            limits.append(tracked.delivered_at + DELIVERED_HOLD)
+        if tracked.not_upcoming_since is not None:
+            limits.append(tracked.not_upcoming_since + LEFT_LIST_EXPIRY)
+        return min(limits)
+
+    async def _fetch_tracking(self, order_id: int) -> tuple[str, DeliveryTracking | None]:
+        """Fetch tracking: ("ok", t), ("not_found", None) or ("failed", None)."""
+        try:
+            tracking = await self._client.orders.get_delivery_tracking(
+                order_id, raise_on_error=True
+            )
+        except (RohlikAPIError, ValueError, TypeError) as err:
+            _LOGGER.debug("Delivery tracking for order %s failed: %s", order_id, err)
+            return "failed", None
+        if tracking is None:
+            return "not_found", None
+        return "ok", tracking
+
+    def _store_tracking(self, order_id: int, tracking: DeliveryTracking, now: datetime) -> bool:
+        """Store a successful fetch. Returns True when it just became DELIVERED."""
+        tracked = self._tracked
+        if tracked is None or tracked.order_id != order_id:
+            tracked = self._tracked = TrackedOrder(order_id, tracking, now)
+        else:
+            tracked.tracking = tracking
+            tracked.fetched_at = now
+        if tracking.is_delivered and tracked.delivered_at is None:
+            tracked.delivered_at = now
+            return True
+        return False
+
+    async def _async_refresh_tracking(self, data: dict | None) -> tuple[bool, bool]:
+        """Refresh delivery tracking from fresh coordinator ``data``.
+
+        Returns (changed, just_delivered). Never raises: tracking is optional.
+        """
+        now = dt_util.utcnow()
+        before = self._tracking_key(now)
+        just_delivered = False
+        raw_orders = (data or {}).get("next_order")
+        if raw_orders is not None:  # None: the upcoming request failed, keep state
+            upcoming = UpcomingOrder.list_from_api(raw_orders)
+            upcoming_ids = {order.id for order in upcoming}
+            soonest, _raw = soonest_upcoming(data)
+            tracked = self._tracked
+
+            # The tracked order left the upcoming list (delivered or cancelled).
+            if tracked is not None:
+                if tracked.order_id in upcoming_ids:
+                    tracked.not_upcoming_since = None
+                elif tracked.not_upcoming_since is None:
+                    tracked.not_upcoming_since = now
+
+            self._no_tracking = {
+                order_id: at
+                for order_id, at in self._no_tracking.items()
+                if now - at < NO_TRACKING_RETRY
+            }
+
+            # 1. A tracked order that left the list: fetch it again to catch
+            #    DELIVERED (bounded), independently of the next order.
+            if (
+                tracked is not None
+                and tracked.not_upcoming_since is not None
+                and not tracked.tracking.is_delivered
+                and tracked.final_fetches < FINAL_FETCH_ATTEMPTS
+            ):
+                tracked.final_fetches += 1
+                outcome, tracking = await self._fetch_tracking(tracked.order_id)
+                if outcome == "ok" and tracking is not None:
+                    just_delivered = self._store_tracking(tracked.order_id, tracking, now)
+                elif outcome == "not_found":
+                    self._tracked = None
+
+            # 2. The soonest order, once its slot is within the lookahead; a
+            #    just-delivered other order is shown for DELIVERED_MIN_SHOW first.
+            held = self._tracked
+            showing_delivered = (
+                held is not None
+                and held.delivered_at is not None
+                and now - held.delivered_at < DELIVERED_MIN_SHOW
+                and soonest is not None
+                and held.order_id != soonest.id
+            )
+            if (
+                soonest is not None
+                and not showing_delivered
+                and soonest.id not in self._no_tracking
+                and (
+                    soonest.slot_since is None
+                    or soonest.slot_since - now <= TRACKING_LOOKAHEAD
+                )
+            ):
+                # Tracking for it replaces any held (delivered or departed) order.
+                outcome, tracking = await self._fetch_tracking(soonest.id)
+                if outcome == "ok" and tracking is not None:
+                    just_delivered = self._store_tracking(soonest.id, tracking, now) or just_delivered
+                elif outcome == "not_found":
+                    self._no_tracking[soonest.id] = now
+                    if self._tracked is not None and self._tracked.order_id == soonest.id:
+                        self._tracked = None
+                # "failed": keep what we had; it ages out via TRACKING_MAX_AGE.
+
+        if self._tracked is not None and self._tracked.is_expired(now):
+            self._tracked = None
+        return self._tracking_key(now) != before, just_delivered
+
+    def _tracking_key(self, now: datetime) -> tuple | None:
+        tracked = self._tracked
+        if tracked is None or not tracked.is_fresh(now) or tracked.is_expired(now):
+            return None
+        return tracked.change_key()
 
     def announcement_received_at(self, announcement: dict) -> datetime:
         """Return when a delivery announcement's current text was first received."""
@@ -559,18 +778,86 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self._eta_stale_unsub = None
         self.async_update_listeners()
 
+    def _late_stage(self, now: datetime) -> bool:
+        """Whether the courier is close: poll often, even past ETA + 10 min.
+
+        True while tracking shows the courier on the way or at the door, or
+        at most one stop before this order, until the courier estimate plus
+        MAX_OVERDUE. Bounded: stale tracking (TRACKING_MAX_AGE) ends it.
+        """
+        tracking = self.tracking
+        if tracking is None or tracking.is_delivered:
+            return False
+        stops = tracking.stops_before
+        if tracking.status not in COURIER_COMING and (stops is None or stops > 1):
+            return False
+        # Bounded by the estimate, else the slot end, plus MAX_OVERDUE, and
+        # absolutely by the slot end + LATCH_HARD_CAP.
+        limit = tracking.estimated_arrival or tracking.slot_till
+        if limit is None:
+            return False
+        end = limit + MAX_OVERDUE
+        if tracking.slot_till is not None:
+            end = min(end, tracking.slot_till + LATCH_HARD_CAP)
+        return now <= end
+
+    def _poll_window(self) -> tuple[datetime, datetime] | None:
+        """ETA-30 min .. ETA+10 min around the courier's uncapped estimate.
+
+        Using the uncapped estimate means a courier well ahead of the slot is
+        still polled for, although the shown ETA is held at the slot start.
+        """
+        tracking = self.tracking
+        if (
+            tracking is not None
+            and tracking.estimated_arrival is not None
+            and not tracking.is_delivered
+            and self._eta.order_id == str(self.tracking_order_id)
+        ):
+            estimate = tracking.estimated_arrival
+            return estimate - ETA_POLL_BEFORE, estimate + ETA_POLL_AFTER
+        return self._eta.window(ETA_POLL_BEFORE, ETA_POLL_AFTER)
+
     @callback
     def _schedule_eta_poll(self) -> None:
-        """Arm the next automatic ETA refresh, from ETA-30 min to ETA+10 min."""
+        """Arm the next automatic ETA refresh.
+
+        Runs from ETA-30 min to ETA+10 min, and in the late stage (courier
+        close, see _late_stage) at least every LATE_STAGE_INTERVAL.
+        """
         if self._eta_poll_unsub is not None:
             self._eta_poll_unsub()
             self._eta_poll_unsub = None
         if not self._auto_refresh_eta or self._closed:
             return
-        if (window := self._eta.window(ETA_POLL_BEFORE, ETA_POLL_AFTER)) is None:
+        now = dt_util.utcnow()
+        # A just-delivered order is shown for DELIVERED_MIN_SHOW; fetch the
+        # next order's tracking right when that ends, not at the next refresh.
+        held = self._tracked
+        soonest, _raw = soonest_upcoming(self.data)
+        if (
+            held is not None
+            and held.delivered_at is not None
+            and soonest is not None
+            and soonest.id != held.order_id
+            and now < held.delivered_at + DELIVERED_MIN_SHOW
+        ):
+            self._eta_poll_unsub = async_track_point_in_time(
+                self.hass,
+                self._handle_eta_poll,
+                held.delivered_at + DELIVERED_MIN_SHOW + timedelta(seconds=1),
+            )
+            return
+        if self._late_stage(now):
+            self._eta_poll_unsub = async_call_later(
+                self.hass,
+                min(self._eta_refresh_interval, LATE_STAGE_INTERVAL),
+                self._handle_eta_poll,
+            )
+            return
+        if (window := self._poll_window()) is None:
             return
         start, end = window
-        now = dt_util.utcnow()
         if now < start:
             self._eta_poll_unsub = async_track_point_in_time(
                 self.hass, self._handle_eta_poll, start
@@ -607,6 +894,14 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             raise UpdateFailed(str(err)) from err
 
         self._last_refresh = datetime.now(self._timezone)
+
+        # Delivery tracking from the fresh data (self.data is still the
+        # previous cycle's here, or None on the first refresh).
+        if not self._closed:
+            try:
+                await self._async_refresh_tracking(data)
+            except Exception as err:  # noqa: BLE001 - tracking is optional
+                _LOGGER.debug("Delivery tracking refresh failed: %s", err)
 
         # Initialize order store on first update (only if analytics enabled)
         if self._analytics and not self._order_store and data.get("login"):
@@ -882,22 +1177,33 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             self.async_update_listeners()
 
     async def refresh_delivery_times(self) -> None:
-        """Cheaply refresh only the delivery announcements (delivery-time ETA).
+        """Cheaply refresh the delivery tracking and/or announcements (ETA).
 
-        The announcement carries the shifting delivery ETA for an upcoming
-        order, so this is light enough to poll every minute shortly before a
-        delivery. Updates self.data["delivery_announcements"] in place and
-        notifies entities, without disturbing the rest of the data or the
-        regular refresh cycle.
+        Light enough to poll every minute shortly before a delivery. While
+        tracking has a courier estimate the announcement request is skipped.
+        Updates the hub's tracking and
+        self.data["delivery_announcements"] in place and notifies entities
+        only if something they show changed.
         """
         if not self.data:
             return
-        result = await self._client.delivery.get_announcements()
-        if result is not None and result != self.data.get("delivery_announcements"):
+        tracking_changed, just_delivered = await self._async_refresh_tracking(self.data)
+        tracking = self.tracking
+        announcements = None
+        if tracking is None or tracking.estimated_arrival is None:
+            announcements = await self._client.delivery.get_announcements()
+        changed = tracking_changed
+        if announcements is not None and announcements != self.data.get("delivery_announcements"):
             # Unchanged announcements are skipped: notifying would make every
             # entity of the account recompute its state for nothing.
-            self.data["delivery_announcements"] = result
+            self.data["delivery_announcements"] = announcements
+            changed = True
+        if changed:
             self.async_update_listeners()
+        if just_delivered and not self._closed:
+            # The order leaves the upcoming list right after delivery: pick
+            # that up now instead of at the next 10-minute refresh.
+            await self.async_request_refresh()
 
     async def async_close(self) -> None:
         """Release resources held by the API client (called on unload)."""

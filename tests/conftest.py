@@ -20,3 +20,13 @@ def no_real_announcement_requests():
         new=AsyncMock(return_value=None),
     ) as mock:
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def no_real_tracking_requests():
+    """Never let delivery tracking reach the network in tests (no tracking: 404)."""
+    with patch(
+        "rohlik_api.services.orders.OrderService.get_delivery_tracking",
+        new=AsyncMock(return_value=None),
+    ) as mock:
+        yield mock

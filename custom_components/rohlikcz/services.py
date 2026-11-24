@@ -138,7 +138,7 @@ def register_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(f"Failed to refresh slots: {err}")
 
     async def async_update_delivery_times(call: ServiceCall) -> None:
-        """Cheaply refresh only the delivery-time announcement (ETA polling)."""
+        """Cheaply refresh only the delivery tracking and announcement (ETA polling)."""
         config_entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
 
         account = _get_account(hass, config_entry_id)
