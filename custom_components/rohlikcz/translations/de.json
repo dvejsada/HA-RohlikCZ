@@ -173,6 +173,12 @@
       }
     },
     "sensor": {
+      "delivery_slots": {
+        "name": "Lieferfenster"
+      },
+      "favourites": {
+        "name": "Favoriten"
+      },
       "first_delivery": {
         "name": "Nächste Lieferung"
       },

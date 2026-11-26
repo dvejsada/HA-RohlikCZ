@@ -100,7 +100,7 @@ The same **Configure** dialog also holds the delivery-time settings:
 |--------|-------------|
 | **Premium Membership** | Active when your premium subscription is valid; premium details available as attributes |
 | **Reusable Bags** | Active when reusable bags are enabled on your account |
-| **Next Order** | Active when you have a scheduled upcoming order; order details as attributes |
+| **Next Order** | Active when you have a scheduled upcoming order; order details as attributes: `order_data` (raw order) and `items` (name, quantity, price, textual amount and picture URL of every line) |
 | **Timeslot Reservation** | Active when you have a reserved delivery timeslot |
 | **Parents Club** | Active when you are a member of the Parents Club |
 | **Express Available** | Active when express delivery is currently available in your area |
@@ -125,6 +125,8 @@ The same **Configure** dialog also holds the delivery-time settings:
 | **Slot Express Time** | Timestamp of the next available express delivery slot |
 | **Slot Standard Time** | Timestamp of the nearest standard delivery slot |
 | **Slot Eco Time** | Timestamp of the nearest eco delivery slot |
+| **Delivery Slots** | Number of delivery windows of the coming days that still have free capacity; the `slots` attribute lists every window (one-hour and, where offered, 15-minute ones) with `id`, `date`, `day`, `since`, `till`, `minutes`, `free` (percent, 0 = booked out), `price`, `premium`, `eco`. No extra request: it reuses the slot data of the regular refresh. Not stored in the recorder. |
+| **Favourites** | Number of your favourite products; the `products` attribute lists them with `id`, `name`, `amount`, `price`, `currency`, `in_stock`, `on_sale` and `image`. Refreshed hourly. Not stored in the recorder. |
 | **Delivery Slot Start** | Start of the delivery window for your next order |
 | **Delivery Slot End** | End of the delivery window for your next order |
 | **Delivery Time** | Predicted exact delivery time for your next order: the courier's tracked estimate when available (never before the slot start while the order is still queued, unless you allowed early delivery), otherwise the courier's announcement or the booked slot |
@@ -185,10 +187,13 @@ Each sensor's attributes contain the top N items (configurable, default 10) sort
 | Action | Description |
 |--------|-------------|
 | **`rohlikcz.add_to_cart`** | Add a product to your cart by product ID and quantity |
-| **`rohlikcz.search_product`** | Search for products available on Rohlík.cz by name |
+| **`rohlikcz.search_product`** | Search for products available on Rohlík.cz by name; every result includes an `image` URL when the shop sends one |
 | **`rohlikcz.search_and_add_to_cart`** | Search for a product by name and add it to your cart in one step |
 | **`rohlikcz.get_shopping_list`** | Retrieve products from a saved Rohlík.cz shopping list by its ID |
-| **`rohlikcz.get_cart_content`** | Get the current contents of your shopping cart |
+| **`rohlikcz.get_cart_content`** | Get the current contents of your shopping cart, with an `image` URL per product when available |
+| **`rohlikcz.get_product`** | Name, price, stock and picture of one product by its ID (also returns the raw product detail) |
+| **`rohlikcz.get_favourites`** | Fetch your favourite products now (also refreshes the **Favourites** sensor) |
+| **`rohlikcz.get_delivery_slots`** | Every delivery window from the last refresh; `only_available: true` leaves out booked-out windows |
 | **`rohlikcz.update_data`** | Force an immediate full data refresh from Rohlík.cz |
 | **`rohlikcz.refresh_slots`** | Cheaply refresh only the delivery-slot data with a single request — light enough to poll every few seconds to catch express availability |
 | **`rohlikcz.update_delivery_times`** | Cheaply refresh only the delivery tracking (and the delivery-time announcement when tracking has no estimate) — light enough to poll every minute to track the shifting delivery ETA |
@@ -205,7 +210,7 @@ Each sensor's attributes contain the top N items (configurable, default 10) sort
 
 ## 🔄 Data Updates
 
-Data is refreshed from Rohlík.cz **every 10 minutes** automatically. The update covers account details, premium status, delivery slots, shopping cart, and order history.
+Data is refreshed from Rohlík.cz **every 10 minutes** automatically. The update covers account details, premium status, delivery slots, shopping cart, and order history. Favourites are refreshed once an hour.
 
 You can trigger an immediate refresh at any time using the **`rohlikcz.update_data`** action, refresh just the delivery slots more frequently with **`rohlikcz.refresh_slots`**, or refresh just the delivery tracking and announcement with **`rohlikcz.update_delivery_times`**.
 

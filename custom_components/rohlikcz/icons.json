@@ -5,6 +5,8 @@
     "get_shopping_list": {"service": "mdi:clipboard-list"},
     "get_cart_content": {"service": "mdi:cart"},
     "search_and_add_to_cart": {"service": "mdi:cart-arrow-right"},
-    "update_delivery_times": {"service": "mdi:truck-fast-outline"}
+    "update_delivery_times": {"service": "mdi:truck-fast-outline"},
+    "get_favourites": {"service": "mdi:heart-outline"},
+    "get_delivery_slots": {"service": "mdi:calendar-clock"}
   }
 }

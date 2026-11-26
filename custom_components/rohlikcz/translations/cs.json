@@ -173,6 +173,12 @@
       }
     },
     "sensor": {
+      "delivery_slots": {
+        "name": "Doručovací okna"
+      },
+      "favourites": {
+        "name": "Oblíbené"
+      },
       "first_delivery": {
         "name": "Nejbližší rozvoz"
       },
