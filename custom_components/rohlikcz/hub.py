@@ -20,12 +20,15 @@ from homeassistant.util import dt as dt_util
 from rohlik_api import (
     CourierPosition,
     DeliveryTracking,
+    DeliverySlot,
     InvalidCredentialsError,
     RohlikAPI,
     RohlikAPIError,
     Site,
     TrackingStatus,
     UpcomingOrder,
+    cdn_url_for,
+    image_url,
 )
 
 from .const import (
@@ -33,9 +36,13 @@ from .const import (
     DEFAULT_AUTO_REFRESH_ETA, DEFAULT_ETA_REFRESH_INTERVAL, DEFAULT_LAST_MILE_LEAD,
 )
 from .eta import MAX_OVERDUE, DeliveryEtaTracker, eta_storage_key, soonest_upcoming
+from .utils import get_earliest_order
 
 #: How often the integration refreshes data from the Rohlik API.
 UPDATE_INTERVAL = timedelta(seconds=600)
+#: The favourites list changes rarely and costs one request per 50 products,
+#: so it is refreshed far less often than the rest of the data.
+FAVOURITES_INTERVAL = timedelta(hours=1)
 
 #: Automatic ETA refresh runs from this long before the ETA ...
 ETA_POLL_BEFORE = timedelta(minutes=30)
@@ -534,6 +541,18 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
         self._analytics: list[str] = analytics or []
         self._top_n: int = top_n
         self._hide_discontinued: bool = hide_discontinued
+        # Line items of the earliest upcoming order (see next_order_items) and
+        # the (order id, item count, total) they were fetched for, so the extra
+        # request only runs when the order is new or has changed.
+        self._next_order_items: list[dict[str, Any]] = []
+        self._next_order_items_key: tuple | None = None
+        # Product ID -> picture URL from the product detail, for order lines
+        # without a picture. Pictures rarely change, so each ID is fetched once.
+        self._product_images: dict[str, str] = {}
+        # The user's favourite products (see favourites) and when they were
+        # last fetched; None until the first successful fetch.
+        self._favourites: list[dict[str, Any]] | None = None
+        self._favourites_fetched: datetime | None = None
 
     @property
     def analytics_enabled(self) -> bool:
@@ -601,6 +620,11 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     @property
     def is_ordered(self) -> bool:
         return len(self.data.get('next_order') or []) > 0
+
+    @property
+    def next_order_items(self) -> list[dict[str, Any]]:
+        """Line items (name, quantity, price, image …) of the earliest upcoming order."""
+        return self._next_order_items
 
     @property
     def order_store(self) -> OrderStore | None:
@@ -957,6 +981,9 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
             except Exception as err:  # noqa: BLE001 - tracking is optional
                 _LOGGER.debug("Delivery tracking refresh failed: %s", err)
 
+        await self._update_next_order_items(data)
+        await self._update_favourites()
+
         # Initialize order store on first update (only if analytics enabled)
         if self._analytics and not self._order_store and data.get("login"):
             user_id = str(data["login"]["data"]["user"]["id"])
@@ -975,6 +1002,148 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
                 )
 
         return data
+
+    async def _update_next_order_items(self, data: dict) -> None:
+        """Fetch the line items of the earliest upcoming order when it changed.
+
+        The upcoming-orders payload only carries item count and up to six
+        pictures (``itemImages``), not the item names, so the items come from
+        the order detail. They are fetched again only when the order ID, its
+        item count or its total changes. A picture missing from the detail is
+        filled in from ``itemImages`` by product ID, and failing that from the
+        product detail (cached per product ID).
+        """
+        order = get_earliest_order(data.get("next_order") or [])
+        if not order or order.get("id") is None:
+            self._next_order_items = []
+            self._next_order_items_key = None
+            return
+
+        total = ((order.get("priceComposition") or {}).get("total") or {}).get("amount")
+        key = (str(order["id"]), order.get("itemsCount"), total)
+        if key == self._next_order_items_key:
+            return
+
+        try:
+            items = await self._client.orders.get_items(int(order["id"]))
+        except Exception as err:  # noqa: BLE001 - optional extra, must never fail the refresh
+            _LOGGER.warning("Failed to fetch items of upcoming order %s: %s", order.get("id"), err)
+            items = None
+
+        if items is None:
+            # Keep the previous list for the same order and retry next refresh;
+            # drop it if it belonged to another order.
+            if self._next_order_items_key and self._next_order_items_key[0] != key[0]:
+                self._next_order_items = []
+                self._next_order_items_key = None
+            return
+
+        images = {
+            str(entry.get("productId")): entry.get("image")
+            for entry in order.get("itemImages") or []
+            if isinstance(entry, dict) and entry.get("image")
+        }
+        rows = []
+        for item in items:
+            image = item.image or images.get(str(item.id))
+            if not image and item.id is not None:
+                # Not in itemImages (max. 6): ask the product detail, once per ID.
+                image = await self._product_image(item.id)
+            rows.append(
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "quantity": item.quantity,
+                    "price": item.price,
+                    "textual_amount": item.textual_amount,
+                    "image": image,
+                }
+            )
+        self._next_order_items = rows
+        self._next_order_items_key = key
+
+    @property
+    def favourites(self) -> list[dict[str, Any]] | None:
+        """The user's favourite products, or None if not fetched (yet).
+
+        Each entry has ``id``, ``name``, ``amount``, ``price``, ``currency``,
+        ``in_stock``, ``on_sale`` and ``image``.
+        """
+        return self._favourites
+
+    @property
+    def favourites_fetched(self) -> datetime | None:
+        """When the favourites were last fetched successfully."""
+        return self._favourites_fetched
+
+    async def _update_favourites(self, force: bool = False) -> bool:
+        """Fetch the favourites when due (hourly) or when forced.
+
+        Optional extra: a failure is logged and keeps the previous list, it
+        never fails the regular refresh. Returns True when a new list arrived.
+        """
+        now = datetime.now(self._timezone)
+        if (
+            not force
+            and self._favourites_fetched is not None
+            and now - self._favourites_fetched < FAVOURITES_INTERVAL
+        ):
+            return False
+        try:
+            cards = await self._client.products.get_favourites()
+        except Exception as err:  # noqa: BLE001 - optional extra, must never fail the refresh
+            _LOGGER.warning("Failed to fetch favourite products: %s", err)
+            cards = None
+        if cards is None:
+            # Retry at the next refresh rather than waiting another hour.
+            return False
+        self._favourites = [
+            {
+                "id": card.id,
+                "name": card.name,
+                "amount": card.amount,
+                "price": card.price,
+                "currency": card.currency,
+                "in_stock": card.in_stock,
+                "on_sale": card.on_sale,
+                "image": card.image,
+            }
+            for card in cards
+        ]
+        self._favourites_fetched = now
+        return True
+
+    async def refresh_favourites(self) -> list[dict[str, Any]] | None:
+        """Fetch the favourites now and notify entities (service call)."""
+        if await self._update_favourites(force=True):
+            self.async_update_listeners()
+        return self._favourites
+
+    @property
+    def delivery_slots(self) -> list[dict[str, Any]]:
+        """Every delivery window of the coming days, sorted by start.
+
+        Parsed from the timeslots data the regular refresh already fetches
+        (no extra request). Compact entries for the dashboard card: ``id``,
+        ``date``, ``day``, ``since``, ``till``, ``minutes``, ``free``
+        (percent, 0 = booked out), ``price``, ``premium`` and ``eco``.
+        """
+        payload = (self.data or {}).get("next_delivery_slot")
+        return [
+            {
+                "id": slot.id,
+                "date": slot.date,
+                "day": slot.day_label,
+                "since": slot.since,
+                "till": slot.till,
+                "minutes": slot.minutes,
+                "free": slot.free_percent,
+                "price": slot.price,
+                "premium": slot.premium,
+                "eco": slot.eco,
+            }
+            for slot in DeliverySlot.list_from_api(payload)
+        ]
 
     async def async_update(self) -> None:
         """Force an immediate data refresh (used by services and after cart changes)."""
@@ -1286,6 +1455,60 @@ class RohlikAccount(DataUpdateCoordinator[dict]):
     async def search_product(self, product_name: str, limit: int = 10, favourite: bool = False):
         """Search for a product by name. Returns a SearchResults model (or None)."""
         return await self._client.products.search(product_name, limit, favourite)
+
+    def _image_from_detail(self, detail: dict | None) -> str | None:
+        """Picture URL from a product detail (``/api/v1/products/{id}``).
+
+        The detail carries ``images``, a list of full URLs (seen on Gurkerl.at);
+        the first one is used. ``imgPath`` is a fallback for other shapes.
+        """
+        if not isinstance(detail, dict):
+            return None
+        cdn = cdn_url_for(self._site.base_url)
+        images = detail.get("images")
+        if isinstance(images, list):
+            for candidate in images:
+                url = image_url(candidate, cdn)
+                if url:
+                    return url
+        return image_url(detail.get("imgPath"), cdn)
+
+    async def _product_image(self, product_id: Any) -> str | None:
+        """Picture of one product from its detail, cached per product ID."""
+        key = str(product_id)
+        if key in self._product_images:
+            return self._product_images[key]
+        try:
+            detail = await self._client.products.get_detail(int(product_id))
+        except Exception as err:  # noqa: BLE001 - optional extra, must never fail the refresh
+            _LOGGER.debug("Failed to fetch picture of product %s: %s", product_id, err)
+            return None
+        url = self._image_from_detail(detail)
+        if url:
+            self._product_images[key] = url
+        return url
+
+    async def get_product(self, product_id: int) -> dict[str, Any]:
+        """Name, price, stock and picture of one product, by ID.
+
+        Name, price and stock come from the product card, the picture from the
+        product detail (``images``, see ``_image_from_detail``). The raw detail
+        is returned as well.
+        """
+        cards = await self._client.products.get_cards([product_id])
+        detail = await self._client.products.get_detail(product_id)
+        card = cards[0] if cards else None
+        detail = detail if isinstance(detail, dict) else {}
+        return {
+            "product_id": product_id,
+            "found": card is not None or bool(detail),
+            "name": card.name if card else detail.get("name"),
+            "price": card.price if card else None,
+            "currency": card.currency if card else None,
+            "in_stock": card.in_stock if card else None,
+            "image": self._image_from_detail(detail),
+            "detail": detail,
+        }
 
     async def get_shopping_list(self, shopping_list_id: str):
         """Get a shopping list by ID. Returns a ShoppingList model."""

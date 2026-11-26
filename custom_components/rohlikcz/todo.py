@@ -49,7 +49,6 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
         super().__init__(rohlik_hub)
         self._rohlik_hub = rohlik_hub
         self._attr_unique_id = f"{rohlik_hub.unique_id}-cart"
-        self._attr_name = "Rohlik Shopping Cart"
         self._attr_device_info = rohlik_hub.device_info
 
     @property
@@ -65,15 +64,22 @@ class RohlikCartTodo(CoordinatorEntity[RohlikAccount], TodoListEntity):
             # Format the summary to include relevant information
             summary = f"{product.name} ({product.quantity}) - {product.price} {product.currency or self._rohlik_hub.currency}"
 
+            description = (
+                f"Category: {product.category_name}\n"
+                f"Brand: {product.brand}\n"
+                f"Product ID: {product.id}"
+            )
+            image = getattr(product, "image", None)
+            if image:
+                description += f"\nImage: {image}"
+
             # Use cart_item_id as the unique identifier for cart items
             items.append(
                 TodoItem(
                     summary=summary,
                     uid=str(product.cart_item_id),
                     status=TodoItemStatus.NEEDS_ACTION,
-                    description=f"Category: {product.category_name}\n"
-                               f"Brand: {product.brand}\n"
-                               f"Product ID: {product.id}"
+                    description=description,
                 )
             )
 

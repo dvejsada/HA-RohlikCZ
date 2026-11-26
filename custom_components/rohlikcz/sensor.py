@@ -80,6 +80,9 @@ async def async_setup_entry(
 
     if rohlik_hub.has_address:
         entities.extend(FirstSlotSensor(rohlik_hub, d) for d in SLOT_DESCRIPTIONS)
+        entities.append(DeliverySlotsSensor(rohlik_hub))
+
+    entities.append(FavouritesSensor(rohlik_hub))
 
     # Only add premium days remaining if the user is premium
     if (rohlik_hub.data.get('login', {}).get('data', {}).get('user', {}).get('premium') or {}).get('active', False):
@@ -474,6 +477,58 @@ class FirstSlotSensor(BaseEntity, SensorEntity):
     @property
     def entity_picture(self) -> str | None:
         return self.entity_description.picture
+
+
+class DeliverySlotsSensor(BaseEntity, SensorEntity):
+    """All delivery windows of the coming days (one-hour and 15-minute).
+
+    The state is the number of windows that still have free capacity; the
+    full list is in the ``slots`` attribute (see RohlikAccount.delivery_slots).
+    """
+
+    _attr_translation_key = "delivery_slots"
+    _attr_should_poll = False
+    _attr_icon = "mdi:calendar-clock"
+    # Several hundred entries: keep them out of the recorder database.
+    _unrecorded_attributes = frozenset({"slots"})
+
+    @property
+    def native_value(self) -> int:
+        return sum(1 for slot in self._rohlik_account.delivery_slots if slot["free"] > 0)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        return {"slots": self._rohlik_account.delivery_slots}
+
+
+class FavouritesSensor(BaseEntity, SensorEntity):
+    """The user's favourite products.
+
+    The state is the number of favourites; the list (name, amount, price,
+    picture, in stock) is in the ``products`` attribute. Refreshed hourly.
+    """
+
+    _attr_translation_key = "favourites"
+    _attr_should_poll = False
+    _attr_icon = "mdi:heart-outline"
+    _unrecorded_attributes = frozenset({"products", "updated"})
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._rohlik_account.favourites is not None
+
+    @property
+    def native_value(self) -> int | None:
+        favourites = self._rohlik_account.favourites
+        return None if favourites is None else len(favourites)
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any]:
+        fetched = self._rohlik_account.favourites_fetched
+        return {
+            "products": self._rohlik_account.favourites or [],
+            "updated": fetched.isoformat() if fetched else None,
+        }
 
 
 class FirstDeliverySensor(BaseEntity, SensorEntity):

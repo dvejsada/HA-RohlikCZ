@@ -173,6 +173,12 @@
       }
     },
     "sensor": {
+      "delivery_slots": {
+        "name": "Delivery slots"
+      },
+      "favourites": {
+        "name": "Favourites"
+      },
       "first_delivery": {
         "name": "Nearest Delivery"
       },
